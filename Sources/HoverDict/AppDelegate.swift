@@ -5,11 +5,18 @@ import AppKit
 ///   → hit test → OverlayPanel.
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
-    private let mouseMonitor = MouseMonitor(stillInterval: 0.1)
+    private let mouseMonitor = MouseMonitor(stillInterval: 0.2)
     private let capturer = ScreenCapturer()
     private let ocr = OCRService()
     private let panel = OverlayPanel()
     private var statusBar: StatusBarController?
+    private let hotKey = HotKeyManager()
+
+    /// Single source of truth for pause state.
+    private var isPaused = false
+    /// UserDefaults key for the persisted take-word delay.
+    private let delayKey = "HoverDict.stillInterval"
+
     private let dictionary: DictionaryService? = {
         // Bundled ECDICT database (copied into Contents/Resources by build_app.sh).
         if let path = Bundle.main.url(forResource: "ecdict", withExtension: "db")?.path {
@@ -67,28 +74,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Pipeline
 
     private func startPipeline() {
+        // Restore the saved take-word delay (default 0.2s).
+        let savedDelay = UserDefaults.standard.object(forKey: delayKey) as? TimeInterval ?? 0.2
+        mouseMonitor.stillInterval = savedDelay
+
         mouseMonitor.onCursorStill = { [weak self] cursorGlobal in
             self?.handleCursorStill(at: cursorGlobal)
         }
         mouseMonitor.start()
 
-        // Menu-bar icon: lets the user pause/resume and quit without the terminal.
+        // Menu-bar icon: pause/resume, delay presets, settings, quit.
         let bar = StatusBarController()
-        bar.onTogglePause = { [weak self] paused in
+        bar.onTogglePause = { [weak self] in
             guard let self else { return }
-            if paused {
-                self.mouseMonitor.stop()
-                self.panel.hidePanel()
-            } else {
-                self.mouseMonitor.start()
-            }
+            self.setPaused(!self.isPaused)
+        }
+        bar.onSetDelay = { [weak self] delay in
+            self?.setDelay(delay)
         }
         bar.onOpenSettings = {
             PermissionManager.openScreenRecordingSettings()
         }
+        bar.markDelay(savedDelay)
+        bar.setPaused(false)
         statusBar = bar
 
-        NSLog("HoverDict: running. Hover over English text to take a word.")
+        // Global hotkey ⌘⇧A toggles take-word on/off (no Accessibility permission needed).
+        hotKey.onTrigger = { [weak self] in
+            guard let self else { return }
+            self.setPaused(!self.isPaused)
+        }
+        hotKey.register()
+
+        NSLog("HoverDict: running. Hover over English text to take a word. (⌘⇧A toggles)")
+    }
+
+    /// Pause/resume take-word. Drives the monitor, the panel, and the menu-bar UI.
+    private func setPaused(_ paused: Bool) {
+        isPaused = paused
+        if paused {
+            mouseMonitor.stop()
+            panel.hidePanel()
+        } else {
+            mouseMonitor.start()
+        }
+        statusBar?.setPaused(paused)
+    }
+
+    /// Change and persist the take-word debounce delay.
+    private func setDelay(_ delay: TimeInterval) {
+        mouseMonitor.stillInterval = delay
+        UserDefaults.standard.set(delay, forKey: delayKey)
+        statusBar?.markDelay(delay)
     }
 
     private func handleCursorStill(at cursorGlobal: CGPoint) {
@@ -129,5 +166,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         mouseMonitor.stop()
+        hotKey.unregister()
     }
 }
