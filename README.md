@@ -7,6 +7,16 @@ Claude 桌面客户端、浏览器(Chrome/Edge/Safari)、VS Code 等。
 
 > 状态:可用的早期版本。当前显示折叠后的中文释义并自动发音。
 
+## 下载安装
+
+👉 **[下载最新版 HoverDict.dmg](https://github.com/yizilian-iren/HoverDict/releases/latest)**(Apple 芯片 / macOS 14+)
+
+1. 打开 DMG,把 HoverDict 拖进 Applications
+2. **首次启动需绕过门禁**(因未公证,仅一次):右键点 HoverDict.app → 打开 → 再点「打开」
+   - 若提示「已损坏」:`xattr -dr com.apple.quarantine /Applications/HoverDict.app`
+3. 首次会请求「屏幕录制」权限,见下方[首次运行](#首次运行授予屏幕录制权限)
+4. 把鼠标停在英文单词上约 0.2 秒即可取词
+
 ## 功能
 
 - 🖱️ **悬停取词**:光标静止约 0.2s 即触发,无需点击
