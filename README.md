@@ -12,7 +12,7 @@ Claude 桌面客户端、浏览器(Chrome/Edge/Safari)、VS Code 等。
 👉 **[下载最新版 HoverDict.dmg](https://github.com/yizilian-iren/HoverDict/releases/latest)**(Apple 芯片 / macOS 14+)
 
 ### 第 1 步:安装
-1. 双击下载好的 `HoverDict-0.1.dmg`
+1. 双击下载好的 `HoverDict-0.2.dmg`
 2. 在弹出的窗口里,把 **HoverDict** 图标拖到 **应用程序(Applications)** 文件夹
 
 ### 第 2 步:第一次打开(只需做一次)
