@@ -11,6 +11,9 @@ DerivedData/
 # Temp dictionary build dir
 /.dict_build/
 
+# Personal dev notes — not for the public repo
+/DEV_NOTES.md
+
 # Local Claude Code settings
 /.claude/
 
