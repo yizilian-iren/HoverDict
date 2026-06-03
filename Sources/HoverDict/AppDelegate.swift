@@ -1,0 +1,133 @@
+import AppKit
+
+/// Wires the pipeline together:
+///   MouseMonitor (cursor still) → ScreenCapturer → OCRService → CoordinateMapper
+///   → hit test → OverlayPanel.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+
+    private let mouseMonitor = MouseMonitor(stillInterval: 0.1)
+    private let capturer = ScreenCapturer()
+    private let ocr = OCRService()
+    private let panel = OverlayPanel()
+    private var statusBar: StatusBarController?
+    private let dictionary: DictionaryService? = {
+        // Bundled ECDICT database (copied into Contents/Resources by build_app.sh).
+        if let path = Bundle.main.url(forResource: "ecdict", withExtension: "db")?.path {
+            return DictionaryService(databasePath: path)
+        }
+        NSLog("HoverDict: ecdict.db not found in bundle — definitions disabled.")
+        return nil
+    }()
+
+    // Guards against overlapping capture/OCR passes if the cursor keeps settling.
+    private var isProcessing = false
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Always set up the menu-bar control and the monitor FIRST, unconditionally.
+        // This way the app never silently dies on a missing permission, and the user
+        // always has a visible icon to pause/quit/open settings. Without permission the
+        // capture step simply returns nil (no popup) until permission is granted.
+        startPipeline()
+
+        // Then nudge for permission if needed — non-blocking, never terminates.
+        promptForPermissionIfNeeded()
+    }
+
+    // MARK: - Permission
+
+    /// If Screen Recording isn't granted yet, trigger the system prompt and show
+    /// guidance. Does NOT terminate — the menu-bar icon stays available and the app
+    /// keeps running, so granting + reopening (or just regranting) is smooth.
+    private func promptForPermissionIfNeeded() {
+        guard !PermissionManager.hasScreenRecordingPermission() else { return }
+
+        // First call triggers the system prompt + registers us in the Settings list.
+        PermissionManager.requestScreenRecordingPermission()
+
+        let alert = NSAlert()
+        alert.messageText = "需要「屏幕录制」权限"
+        alert.informativeText = """
+        HoverDict 通过屏幕 OCR 取词,需要「屏幕录制」权限。
+
+        请在 系统设置 → 隐私与安全性 → 屏幕录制 中勾选 HoverDict,
+        然后退出并重新启动本应用(授权后必须重启进程才生效)。
+
+        提示:菜单栏图标里也能随时打开此设置或退出。
+        """
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "稍后")
+
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            PermissionManager.openScreenRecordingSettings()
+        }
+        // No terminate — keep running with the menu-bar icon available.
+    }
+
+    // MARK: - Pipeline
+
+    private func startPipeline() {
+        mouseMonitor.onCursorStill = { [weak self] cursorGlobal in
+            self?.handleCursorStill(at: cursorGlobal)
+        }
+        mouseMonitor.start()
+
+        // Menu-bar icon: lets the user pause/resume and quit without the terminal.
+        let bar = StatusBarController()
+        bar.onTogglePause = { [weak self] paused in
+            guard let self else { return }
+            if paused {
+                self.mouseMonitor.stop()
+                self.panel.hidePanel()
+            } else {
+                self.mouseMonitor.start()
+            }
+        }
+        bar.onOpenSettings = {
+            PermissionManager.openScreenRecordingSettings()
+        }
+        statusBar = bar
+
+        NSLog("HoverDict: running. Hover over English text to take a word.")
+    }
+
+    private func handleCursorStill(at cursorGlobal: CGPoint) {
+        // Don't re-trigger while the cursor is resting over our own panel.
+        if panel.isVisible && panel.frame.insetBy(dx: -8, dy: -8).contains(cursorGlobal) {
+            return
+        }
+        guard !isProcessing else { return }
+        isProcessing = true
+
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isProcessing = false }
+
+            guard let capture = await self.capturer.capture(around: cursorGlobal) else {
+                await MainActor.run { self.panel.hidePanel() }
+                return
+            }
+
+            let words = self.ocr.recognizeWords(in: capture.cgImage)
+            let hits = CoordinateMapper.resolve(words: words,
+                                                captureRectGlobal: capture.captureRectGlobal)
+            let hit = CoordinateMapper.wordUnderCursor(hits, cursorGlobal: cursorGlobal)
+
+            // Look up the definition off the main thread (DictionaryService is synchronous).
+            let entry = hit.flatMap { self.dictionary?.lookup($0.text) }
+
+            await MainActor.run {
+                if let hit {
+                    self.panel.show(word: hit.text, entry: entry, below: cursorGlobal)
+                } else {
+                    // Strict mode: nothing directly under the cursor → hide the panel.
+                    self.panel.hidePanel()
+                }
+            }
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        mouseMonitor.stop()
+    }
+}
