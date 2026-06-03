@@ -1,0 +1,26 @@
+# Build artifacts
+/build/
+/.build/
+*.dmg
+DerivedData/
+
+# Bundled dictionary — too large for GitHub (125MB > 100MB limit).
+# Regenerate with: ./Scripts/fetch_dict.sh
+/Resources/ecdict.db
+
+# Temp dictionary build dir
+/.dict_build/
+
+# Local Claude Code settings
+/.claude/
+
+# VSCode: its Swift "Debug/Run" launches the bare SwiftPM binary (no .app bundle → no
+# dictionary, wrong Screen Recording attribution). Build via `make run` instead.
+/.vscode/
+
+# macOS
+.DS_Store
+
+# SwiftPM
+Package.resolved
+.swiftpm/

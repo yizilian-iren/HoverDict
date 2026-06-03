@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Phase 1: non-sandboxed take-word tool. This entitlements file is here mainly for the
+  FUTURE notarization path (Developer ID + Hardened Runtime). For local ad-hoc runs the
+  build script does NOT apply these (ad-hoc + Hardened Runtime adds friction with no
+  benefit during development).
+
+  Explicitly NOT sandboxed — a take-word tool that reads the whole screen cannot run
+  inside the App Sandbox, which is why distribution is direct download + notarization
+  rather than the Mac App Store.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+</dict>
+</plist>

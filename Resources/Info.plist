@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>HoverDict</string>
+    <key>CFBundleDisplayName</key>
+    <string>HoverDict</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.hoverdict.HoverDict</string>
+    <key>CFBundleExecutable</key>
+    <string>HoverDict</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <!-- Agent app: no Dock icon, no menu bar; matches setActivationPolicy(.accessory). -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- Screen Recording (TCC) has no required usage-description string, but we set a
+         human-readable name so this app appears clearly in the Settings list. -->
+    <key>NSHumanReadableCopyright</key>
+    <string>HoverDict — OCR hover dictionary (Phase 1 prototype)</string>
+</dict>
+</plist>
