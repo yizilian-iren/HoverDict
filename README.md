@@ -11,11 +11,42 @@ Claude 桌面客户端、浏览器(Chrome/Edge/Safari)、VS Code 等。
 
 👉 **[下载最新版 HoverDict.dmg](https://github.com/yizilian-iren/HoverDict/releases/latest)**(Apple 芯片 / macOS 14+)
 
-1. 打开 DMG,把 HoverDict 拖进 Applications
-2. **首次启动需绕过门禁**(因未公证,仅一次):右键点 HoverDict.app → 打开 → 再点「打开」
-   - 若提示「已损坏」:`xattr -dr com.apple.quarantine /Applications/HoverDict.app`
-3. 首次会请求「屏幕录制」权限,见下方[首次运行](#首次运行授予屏幕录制权限)
-4. 把鼠标停在英文单词上约 0.2 秒即可取词
+### 第 1 步:安装
+1. 双击下载好的 `HoverDict-0.1.dmg`
+2. 在弹出的窗口里,把 **HoverDict** 图标拖到 **应用程序(Applications)** 文件夹
+
+### 第 2 步:第一次打开(只需做一次)
+这是免费、未经苹果公证的软件,所以第一次打开系统会拦一下,这样放行:
+
+1. 打开 **应用程序** 文件夹,找到 **HoverDict**
+2. **不要双击**,而是 **按住 Control 键点它**(或用触控板双指点),在菜单里选 **打开**
+3. 弹出的提示框里再点一次 **打开**
+
+> 如果上面没有「打开」按钮,或提示「已损坏」:
+> 打开 **系统设置 → 隐私与安全性**,向下滚动,会看到一行「已阻止打开 HoverDict…」,
+> 点它旁边的 **仍要打开**,再确认一次即可。
+
+### 第 3 步:允许「屏幕录制」
+软件靠「看」屏幕来取词,需要这个权限:
+
+1. 第一次运行会提示需要权限,点 **打开系统设置**
+2. 在 **屏幕录制** 列表里把 **HoverDict** 的开关打开
+3. 退出 HoverDict 再重新打开一次
+
+### 完成 🎉
+把鼠标停在任意英文单词上约半秒,下方就会弹出中文意思并自动朗读。
+
+<details>
+<summary>极少数情况:以上都打不开、且提示「已损坏」</summary>
+
+打开「终端」程序(在 **应用程序 → 实用工具 → 终端**,或用 Spotlight 🔍 搜 “终端”),
+粘贴下面这行后按回车,再回到第 2 步:
+
+```
+xattr -dr com.apple.quarantine /Applications/HoverDict.app
+```
+这行的作用是「撕掉系统给下载文件盖的隔离印章」,执行一次即可。
+</details>
 
 ## 功能
 
