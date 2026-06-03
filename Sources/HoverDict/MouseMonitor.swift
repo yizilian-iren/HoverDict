@@ -10,7 +10,8 @@ final class MouseMonitor {
     /// The point is in AppKit **global screen coordinates** (points, bottom-left origin).
     var onCursorStill: ((CGPoint) -> Void)?
 
-    private let stillInterval: TimeInterval
+    /// Debounce interval; settable at runtime (takes effect on the next mouse move).
+    var stillInterval: TimeInterval
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var debounceTimer: Timer?
