@@ -17,6 +17,7 @@ final class StatusBarController {
     /// Delay presets shown in the submenu.
     static let delayPresets: [(title: String, value: TimeInterval)] = [
         ("即时", 0.0),
+        ("0.01s", 0.01),
         ("快 (0.1s)", 0.1),
         ("标准 (0.2s)", 0.2),
         ("慢 (0.4s)", 0.4),

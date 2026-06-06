@@ -1,14 +1,13 @@
 import AppKit
 import AVFoundation
 
-/// The hover popup: a compact, non-activating floating panel that shows ONLY the
-/// (collapsed) Chinese translation — no English headword, no phonetic — plus a small
-/// speaker icon for replay. The word is auto-spoken when the popup appears.
-/// It never takes key/main status, so the app being read keeps focus.
+/// The hover popup: a compact, non-activating, pass-through floating panel showing ONLY
+/// the (collapsed) Chinese translation — no English headword, no phonetic. The word is
+/// auto-spoken when the popup appears. The panel ignores the mouse entirely, and the
+/// pipeline dismisses it as soon as the cursor moves over it.
 final class OverlayPanel: NSPanel {
 
     private let translationLabel = NSTextField(wrappingLabelWithString: "")
-    private let speakButton = NSButton()
     // Must be retained for the lifetime of speech, otherwise it deallocates mid-utterance.
     private let synthesizer = AVSpeechSynthesizer()
 
@@ -17,9 +16,19 @@ final class OverlayPanel: NSPanel {
     /// Tracks the currently displayed word so we auto-speak only when it CHANGES,
     /// not every time the pipeline re-fires on the same word.
     private var lastShownWord: String?
+    /// Pending auto-speak; cancelled if the cursor moves to another word first.
+    private var speakTimer: Timer?
+    /// Dwell time on a word before auto-speaking, to avoid blasting audio while the
+    /// cursor sweeps across text.
+    private let speakDelay: TimeInterval = 0.5
 
-    /// Fixed content width; the popup grows vertically to fit the translation.
-    private let contentWidth: CGFloat = 260
+    /// Background translucency (0 = invisible, 1 = opaque). Text stays fully opaque.
+    private let backgroundAlpha: CGFloat = 0.8
+
+    /// The popup width adapts to the text, between these bounds; only past the max does
+    /// the translation wrap onto more lines.
+    private let minContentWidth: CGFloat = 90
+    private let maxContentWidth: CGFloat = 360
     private let hMargin: CGFloat = 12
     private let vMargin: CGFloat = 10
 
@@ -27,12 +36,13 @@ final class OverlayPanel: NSPanel {
     private let maxPosLines = 2
 
     private var container: NSView!
+    /// Updated each `show(...)` to size the popup to its content.
+    private var widthConstraint: NSLayoutConstraint!
 
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 260, height: 60),
-            // .nonactivatingPanel: clicking the speak button works WITHOUT activating
-            // our app (so we never steal focus). .borderless: clean tooltip look.
+            // .nonactivatingPanel + .borderless: a passive tooltip that never steals focus.
             styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
@@ -46,14 +56,14 @@ final class OverlayPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         becomesKeyOnlyIfNeeded = true
+        // Pass-through / non-selectable: the popup never intercepts the mouse. Combined
+        // with the pipeline hiding it when the cursor enters its frame, moving onto the
+        // popup just makes it vanish.
+        ignoresMouseEvents = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
         buildContentView()
     }
-
-    // Borderless panels normally can't become key; allow it only so the button stays
-    // clickable, but we never call makeKey, so focus is preserved.
-    override var canBecomeKey: Bool { true }
 
     private func buildContentView() {
         container = NSView()
@@ -65,41 +75,34 @@ final class OverlayPanel: NSPanel {
         effect.wantsLayer = true
         effect.layer?.cornerRadius = 10
         effect.layer?.masksToBounds = true
+        // Make ONLY the background more see-through; the text stays a separate layer on
+        // top, so it remains fully opaque and readable. Lower = more transparent.
+        effect.alphaValue = backgroundAlpha
         effect.translatesAutoresizingMaskIntoConstraints = false
 
-        // Small speaker icon on the left for manual replay.
-        speakButton.title = "🔊"
-        speakButton.isBordered = false
-        speakButton.font = .systemFont(ofSize: 13)
-        speakButton.target = self
-        speakButton.action = #selector(speakTapped)
-        speakButton.translatesAutoresizingMaskIntoConstraints = false
-        speakButton.setContentHuggingPriority(.required, for: .horizontal)
-
-        // Chinese translation fills the rest.
+        // Chinese translation fills the whole popup.
         translationLabel.font = .systemFont(ofSize: 13)
         translationLabel.textColor = .labelColor
         translationLabel.maximumNumberOfLines = 3      // collapse: cap the box height
         translationLabel.lineBreakMode = .byTruncatingTail
-        translationLabel.preferredMaxLayoutWidth = contentWidth - hMargin * 2 - 26
+        translationLabel.preferredMaxLayoutWidth = maxContentWidth - hMargin * 2
         translationLabel.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(effect)
-        container.addSubview(speakButton)
         container.addSubview(translationLabel)
 
+        // Width is set per-show() to fit the content (see show()).
+        widthConstraint = container.widthAnchor.constraint(equalToConstant: maxContentWidth)
+
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: contentWidth),
+            widthConstraint,
 
             effect.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             effect.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             effect.topAnchor.constraint(equalTo: container.topAnchor),
             effect.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
-            speakButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: hMargin),
-            speakButton.topAnchor.constraint(equalTo: container.topAnchor, constant: vMargin),
-
-            translationLabel.leadingAnchor.constraint(equalTo: speakButton.trailingAnchor, constant: 6),
+            translationLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: hMargin),
             translationLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -hMargin),
             translationLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: vMargin),
             translationLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -vMargin),
@@ -120,30 +123,40 @@ final class OverlayPanel: NSPanel {
             translationLabel.stringValue = "（未找到释义）"
         }
 
-        // Auto-speak only when moving onto a NEW word.
+        // Auto-speak only when moving onto a NEW word, AND only after the cursor has
+        // dwelled on it for `speakDelay`. Sweeping across many words keeps cancelling
+        // the pending timer, so only a word you actually pause on gets spoken — this
+        // is what keeps it from being noisy.
         if word.caseInsensitiveCompare(lastShownWord ?? "") != .orderedSame {
-            speak(word)
             lastShownWord = word
+            scheduleAutoSpeak(word)
         }
 
-        // Size the window to fit the content (fixed width, dynamic height).
-        container.layoutSubtreeIfNeeded()
-        let fitting = container.fittingSize
-        let panelWidth = contentWidth
-        let panelHeight = max(fitting.height, 38)
+        // Adaptive width: fit the text up to maxContentWidth; only past that does it wrap.
+        let textWidth = Self.maxLineWidth(of: translationLabel.stringValue,
+                                          font: translationLabel.font ?? .systemFont(ofSize: 13))
+        let clampedTextWidth = min(textWidth, maxContentWidth - hMargin * 2)
+        let panelWidth = min(max(clampedTextWidth + hMargin * 2, minContentWidth), maxContentWidth)
+        widthConstraint.constant = panelWidth
+        translationLabel.preferredMaxLayoutWidth = panelWidth - hMargin * 2
 
-        // Place below the cursor; setFrameOrigin uses the SAME global bottom-left space
-        // as NSEvent.mouseLocation, so no conversion is needed.
+        // Now compute the height for that width.
+        container.layoutSubtreeIfNeeded()
+        let panelHeight = max(container.fittingSize.height, 38)
+
+        // Place ABOVE the cursor. In AppKit's bottom-left global space (same space as
+        // NSEvent.mouseLocation), "above" means a larger y — the panel's bottom edge sits
+        // `gap` points above the cursor, so the whole panel is above it.
         let gap: CGFloat = 18
         var origin = CGPoint(x: cursorGlobal.x - 16,
-                             y: cursorGlobal.y - gap - panelHeight)
+                             y: cursorGlobal.y + gap)
 
         if let screen = NSScreen.screens.first(where: { $0.frame.contains(cursorGlobal) }) {
             let f = screen.frame
             origin.x = min(max(origin.x, f.minX + 4), f.maxX - panelWidth - 4)
-            // No room below → flip above the cursor.
-            if origin.y < f.minY + 4 {
-                origin.y = cursorGlobal.y + gap
+            // No room above → flip below the cursor.
+            if origin.y + panelHeight > f.maxY - 4 {
+                origin.y = cursorGlobal.y - gap - panelHeight
             }
             origin.y = min(max(origin.y, f.minY + 4), f.maxY - panelHeight - 4)
         }
@@ -156,10 +169,16 @@ final class OverlayPanel: NSPanel {
         orderOut(nil)
         // Reset so moving away and back onto the same word speaks again.
         lastShownWord = nil
+        speakTimer?.invalidate()
     }
 
-    @objc private func speakTapped() {
-        speak(spokenWord)
+    /// Speak `word` after `speakDelay`, cancelling any earlier pending speech. Fast
+    /// sweeps keep rescheduling, so only a word the cursor lingers on is spoken.
+    private func scheduleAutoSpeak(_ word: String) {
+        speakTimer?.invalidate()
+        speakTimer = Timer.scheduledTimer(withTimeInterval: speakDelay, repeats: false) { [weak self] _ in
+            self?.speak(word)
+        }
     }
 
     func speak(_ text: String) {
@@ -180,5 +199,16 @@ final class OverlayPanel: NSPanel {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         return lines.prefix(maxLines).joined(separator: "\n")
+    }
+
+    /// Widest rendered line of `text` (text may contain explicit newlines), in points.
+    static func maxLineWidth(of text: String, font: NSFont) -> CGFloat {
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        var widest: CGFloat = 0
+        for line in text.split(whereSeparator: \.isNewline) {
+            let w = (String(line) as NSString).size(withAttributes: attrs).width
+            widest = max(widest, w)
+        }
+        return ceil(widest) + 1   // +1 guards against sub-pixel clipping
     }
 }
