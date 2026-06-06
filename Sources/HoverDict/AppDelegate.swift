@@ -129,8 +129,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleCursorStill(at cursorGlobal: CGPoint) {
-        // Don't re-trigger while the cursor is resting over our own panel.
-        if panel.isVisible && panel.frame.insetBy(dx: -8, dy: -8).contains(cursorGlobal) {
+        // Moving onto the popup dismisses it (the panel itself ignores the mouse).
+        if panel.isVisible && panel.frame.contains(cursorGlobal) {
+            panel.hidePanel()
             return
         }
         guard !isProcessing else { return }
