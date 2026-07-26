@@ -1,10 +1,11 @@
 import AppKit
 import AVFoundation
+import QuartzCore
 
 /// The hover popup: a compact, non-activating, pass-through floating panel showing ONLY
 /// the (collapsed) Chinese translation — no English headword, no phonetic. The word is
 /// auto-spoken when the popup appears. The panel ignores the mouse entirely, and the
-/// pipeline dismisses it as soon as the cursor moves over it.
+/// pipeline dismisses it (with a fade) as soon as the cursor moves.
 final class OverlayPanel: NSPanel {
 
     private let translationLabel = NSTextField(wrappingLabelWithString: "")
@@ -21,6 +22,16 @@ final class OverlayPanel: NSPanel {
     /// Dwell time on a word before auto-speaking, to avoid blasting audio while the
     /// cursor sweeps across text.
     private let speakDelay: TimeInterval = 0.5
+    /// Master mute switch (toggled from the menu bar, persisted by AppDelegate). When
+    /// false, hovering still shows the popup but nothing is spoken.
+    var soundEnabled = true
+
+    /// Bumped on each show/hide so in-flight fade completions don't clobber a newer state.
+    private var fadeGeneration = 0
+    /// True while a fade-out is in progress; avoids restarting the animation on every move.
+    private var isFadingOut = false
+    private let fadeInDuration: TimeInterval = 0.12
+    private let fadeOutDuration: TimeInterval = 0.18
 
     /// Background translucency (0 = invisible, 1 = opaque). Text stays fully opaque.
     private let backgroundAlpha: CGFloat = 0.8
@@ -32,8 +43,8 @@ final class OverlayPanel: NSPanel {
     private let hMargin: CGFloat = 12
     private let vMargin: CGFloat = 10
 
-    /// How many POS lines of the ECDICT translation to keep when collapsing.
-    private let maxPosLines = 2
+    /// How many comma-separated senses of the primary meaning to keep when collapsing.
+    private let maxSenses = 2
 
     private var container: NSView!
     /// Updated each `show(...)` to size the popup to its content.
@@ -118,7 +129,7 @@ final class OverlayPanel: NSPanel {
         spokenWord = word
 
         if let translation = entry?.translation {
-            translationLabel.stringValue = Self.collapse(translation, maxLines: maxPosLines)
+            translationLabel.stringValue = Self.collapse(translation, maxSenses: maxSenses)
         } else {
             translationLabel.stringValue = "（未找到释义）"
         }
@@ -162,14 +173,65 @@ final class OverlayPanel: NSPanel {
         }
 
         setFrame(NSRect(x: origin.x, y: origin.y, width: panelWidth, height: panelHeight), display: true)
-        orderFrontRegardless()
+
+        // Cancel any in-flight fade-out; fade in when appearing from hidden.
+        isFadingOut = false
+        fadeGeneration += 1
+        let appearing = !isVisible || alphaValue < 0.05
+        if appearing {
+            alphaValue = 0
+            orderFrontRegardless()
+            let gen = fadeGeneration
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = fadeInDuration
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                animator().alphaValue = 1
+            } completionHandler: { [weak self] in
+                guard let self, gen == self.fadeGeneration else { return }
+                self.alphaValue = 1
+            }
+        } else {
+            alphaValue = 1
+            orderFrontRegardless()
+        }
     }
 
-    func hidePanel() {
-        orderOut(nil)
+    /// Hide the popup. Defaults to a short fade-out; pass `animated: false` for an
+    /// immediate dismiss (pause / mode switch / quit).
+    func hidePanel(animated: Bool = true) {
         // Reset so moving away and back onto the same word speaks again.
         lastShownWord = nil
         speakTimer?.invalidate()
+
+        guard isVisible else {
+            isFadingOut = false
+            alphaValue = 1
+            return
+        }
+        // Already fading — let the current animation finish.
+        if animated && isFadingOut { return }
+
+        fadeGeneration += 1
+        let gen = fadeGeneration
+
+        guard animated else {
+            isFadingOut = false
+            orderOut(nil)
+            alphaValue = 1
+            return
+        }
+
+        isFadingOut = true
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = fadeOutDuration
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            guard let self, gen == self.fadeGeneration else { return }
+            self.isFadingOut = false
+            self.orderOut(nil)
+            self.alphaValue = 1
+        }
     }
 
     /// Speak `word` after `speakDelay`, cancelling any earlier pending speech. Fast
@@ -182,23 +244,50 @@ final class OverlayPanel: NSPanel {
     }
 
     func speak(_ text: String) {
+        guard soundEnabled else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let utterance = AVSpeechUtterance(string: trimmed)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        // Cut off any system speech still running from the previous word.
         synthesizer.stopSpeaking(at: .immediate)
-        synthesizer.speak(utterance)
+        // Prefer the cached anime clip; fall back to the system voice for words that
+        // haven't been pre-generated yet (the miss is logged for later pregen).
+        TTSPlayer.shared.play(trimmed) { [weak self] in
+            guard let self else { return }
+            let utterance = AVSpeechUtterance(string: trimmed)
+            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+            self.synthesizer.speak(utterance)
+        }
     }
 
-    /// Collapse an ECDICT translation (POS lines separated by "\n") down to the first
-    /// `maxLines` non-empty senses, joined back with newlines. The label additionally
-    /// caps the rendered height via `maximumNumberOfLines`.
-    static func collapse(_ translation: String, maxLines: Int) -> String {
+    /// Reduce an ECDICT translation to just the gist: drop the part-of-speech markers
+    /// (n./vt./a.…) and domain tags ([医]/[计]…), then keep only the first `maxSenses`
+    /// comma-separated meanings of the most common entry. So "n. 苹果, 家伙\n[医] 苹果"
+    /// becomes "苹果, 家伙".
+    static func collapse(_ translation: String, maxSenses: Int) -> String {
         let lines = translation
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        return lines.prefix(maxLines).joined(separator: "\n")
+
+        // A leading part-of-speech marker, e.g. "n. ", "vt. ", "prep. ".
+        let posMarker = #/^[a-zA-Z]{1,5}\.\s*/#
+        // Prefer the first real POS line; skip domain tags ("[医] …") and grammar notes
+        // ("run的过去式…") that carry no POS marker. Fall back if nothing qualifies.
+        guard var sense = lines.first(where: { $0.firstMatch(of: posMarker) != nil })
+            ?? lines.first(where: { !$0.hasPrefix("[") })
+            ?? lines.first
+        else { return "" }
+
+        if let m = sense.firstMatch(of: posMarker) {
+            sense.removeSubrange(m.range)
+        }
+
+        // Keep only the first few senses (split on Chinese/ASCII commas and "、").
+        let senses = sense
+            .split(whereSeparator: { ",，、".contains($0) })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return senses.prefix(max(1, maxSenses)).joined(separator: ", ")
     }
 
     /// Widest rendered line of `text` (text may contain explicit newlines), in points.

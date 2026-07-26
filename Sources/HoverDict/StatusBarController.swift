@@ -11,6 +11,10 @@ final class StatusBarController {
     var onTogglePause: (() -> Void)?
     /// User picked a delay preset (seconds).
     var onSetDelay: ((TimeInterval) -> Void)?
+    /// User toggled the speak-aloud switch.
+    var onToggleSound: (() -> Void)?
+    /// User toggled click-to-show (vs hover) take-word mode.
+    var onToggleClickMode: (() -> Void)?
     /// User picked "Screen Recording settings…".
     var onOpenSettings: (() -> Void)?
 
@@ -26,6 +30,8 @@ final class StatusBarController {
 
     private let statusItem: NSStatusItem
     private let toggleItem: NSMenuItem
+    private let soundItem: NSMenuItem
+    private let clickModeItem: NSMenuItem
     private var delayItems: [NSMenuItem] = []
 
     init() {
@@ -55,6 +61,13 @@ final class StatusBarController {
         toggleItem = NSMenuItem(title: "暂停取词",
                                 action: #selector(togglePause),
                                 keyEquivalent: "a")
+        // Initialize before the first `self` use below (Swift requires all stored `let`s set).
+        soundItem = NSMenuItem(title: "朗读发声",
+                               action: #selector(toggleSound),
+                               keyEquivalent: "")
+        clickModeItem = NSMenuItem(title: "点击取词",
+                                   action: #selector(toggleClickMode),
+                                   keyEquivalent: "")
         toggleItem.keyEquivalentModifierMask = [.command, .shift]
         toggleItem.target = self
         menu.addItem(toggleItem)
@@ -73,6 +86,14 @@ final class StatusBarController {
         }
         delayParent.submenu = delayMenu
         menu.addItem(delayParent)
+
+        // Click-to-show toggle (checkmark reflects state; set by setClickModeEnabled).
+        clickModeItem.target = self
+        menu.addItem(clickModeItem)
+
+        // Speak-aloud toggle (checkmark reflects state; set by setSoundEnabled).
+        soundItem.target = self
+        menu.addItem(soundItem)
 
         let settings = NSMenuItem(title: "屏幕录制权限设置…",
                                   action: #selector(openSettings),
@@ -98,6 +119,16 @@ final class StatusBarController {
         statusItem.button?.toolTip = paused ? "HoverDict — 已暂停" : "HoverDict — 取词工具"
     }
 
+    /// Reflect whether speaking is on (checkmark) or off.
+    func setSoundEnabled(_ enabled: Bool) {
+        soundItem.state = enabled ? .on : .off
+    }
+
+    /// Reflect whether click-to-show mode is on (checkmark) or off (hover).
+    func setClickModeEnabled(_ enabled: Bool) {
+        clickModeItem.state = enabled ? .on : .off
+    }
+
     /// Tick the submenu item matching `value`.
     func markDelay(_ value: TimeInterval) {
         for item in delayItems {
@@ -108,6 +139,14 @@ final class StatusBarController {
 
     @objc private func togglePause() {
         onTogglePause?()
+    }
+
+    @objc private func toggleSound() {
+        onToggleSound?()
+    }
+
+    @objc private func toggleClickMode() {
+        onToggleClickMode?()
     }
 
     @objc private func selectDelay(_ sender: NSMenuItem) {
