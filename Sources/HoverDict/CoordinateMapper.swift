@@ -75,4 +75,28 @@ enum CoordinateMapper {
         }
         return best
     }
+
+    /// Nearby words on the same visual line as `target`, joined into a short phrase
+    /// for POS tagging (±`window` tokens). Falls back to the bare word if nothing
+    /// else shares the line.
+    static func contextPhrase(around target: WordHit,
+                              in words: [WordHit],
+                              window: Int = 5,
+                              lineSlop: CGFloat = 8) -> String {
+        let sameLine = words
+            .filter { abs($0.globalRect.midY - target.globalRect.midY) <= lineSlop }
+            .sorted { $0.globalRect.minX < $1.globalRect.minX }
+
+        guard let idx = sameLine.firstIndex(where: {
+            $0.text == target.text
+                && abs($0.globalRect.midX - target.globalRect.midX) < 0.5
+                && abs($0.globalRect.midY - target.globalRect.midY) < 0.5
+        }) else {
+            return target.text
+        }
+
+        let start = max(0, idx - window)
+        let end = min(sameLine.count - 1, idx + window)
+        return sameLine[start...end].map(\.text).joined(separator: " ")
+    }
 }

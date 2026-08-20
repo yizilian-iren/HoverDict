@@ -60,7 +60,9 @@ final class OverlayPanel: NSPanel {
         )
 
         isFloatingPanel = true
-        level = .floating
+        // `.floating` sits under fullscreen app windows; `.mainMenu` is the usual
+        // level that still paints above another app's fullscreen Space.
+        level = .mainMenu
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         isOpaque = false
@@ -71,9 +73,36 @@ final class OverlayPanel: NSPanel {
         // with the pipeline hiding it when the cursor enters its frame, moving onto the
         // popup just makes it vanish.
         ignoresMouseEvents = true
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        // Do NOT use `.stationary` — it can leave the panel stranded on the desktop
+        // Space when an app enters fullscreen (popup "missing" until fullscreen toggled).
+        applyFullscreenFriendlyBehavior()
+
+        // Space / fullscreen transitions can detach the panel; re-assert on change.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(activeSpaceDidChange),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
 
         buildContentView()
+    }
+
+    /// Collection behavior that lets the panel appear on every Space, including
+    /// another app's fullscreen Space.
+    private func applyFullscreenFriendlyBehavior() {
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        // Re-assert level in case a Space transition reset stacking.
+        level = .mainMenu
+    }
+
+    @objc private func activeSpaceDidChange() {
+        applyFullscreenFriendlyBehavior()
+        // If we were visible when the user entered/left fullscreen, bring the panel
+        // onto the new Space; otherwise the next show() will place it correctly.
+        if isVisible {
+            orderFrontRegardless()
+        }
     }
 
     private func buildContentView() {
@@ -124,22 +153,35 @@ final class OverlayPanel: NSPanel {
 
     /// Show the popup just below `cursorGlobal` (AppKit global, bottom-left, points).
     /// `word` is the recognized word (used for pronunciation); `entry` is the dictionary
-    /// result (may be nil). Auto-speaks when the word changes.
-    func show(word: String, entry: DictionaryEntry?, below cursorGlobal: CGPoint) {
+    /// result (may be nil). `preferredPOS` steers which ECDICT sense line to show when
+    /// the local context suggests a part of speech.
+    /// - Hover: auto-speaks only when the word changes (after a short dwell).
+    /// - Click (`forceSpeak`): speaks immediately — including a re-click of the same word.
+    func show(word: String,
+              entry: DictionaryEntry?,
+              preferredPOS: SensePicker.POSKind? = nil,
+              forceSpeak: Bool = false,
+              below cursorGlobal: CGPoint) {
         spokenWord = word
 
         if let translation = entry?.translation {
-            translationLabel.stringValue = Self.collapse(translation, maxSenses: maxSenses)
+            translationLabel.stringValue = Self.collapse(translation,
+                                                         maxSenses: maxSenses,
+                                                         preferredPOS: preferredPOS)
         } else {
             translationLabel.stringValue = "（未找到释义）"
         }
 
-        // Auto-speak only when moving onto a NEW word, AND only after the cursor has
-        // dwelled on it for `speakDelay`. Sweeping across many words keeps cancelling
-        // the pending timer, so only a word you actually pause on gets spoken — this
-        // is what keeps it from being noisy.
-        if word.caseInsensitiveCompare(lastShownWord ?? "") != .orderedSame {
+        let isNewWord = word.caseInsensitiveCompare(lastShownWord ?? "") != .orderedSame
+        if isNewWord {
             lastShownWord = word
+        }
+        // Click mode: always speak now (re-click on the same word replays).
+        // Hover mode: only when the word changes, after a short dwell so sweeps stay quiet.
+        if forceSpeak {
+            speakTimer?.invalidate()
+            speak(word)
+        } else if isNewWord {
             scheduleAutoSpeak(word)
         }
 
@@ -173,6 +215,10 @@ final class OverlayPanel: NSPanel {
         }
 
         setFrame(NSRect(x: origin.x, y: origin.y, width: panelWidth, height: panelHeight), display: true)
+
+        // Re-bind to the active (possibly fullscreen) Space every show — Space
+        // transitions otherwise leave the panel invisible on the wrong desktop.
+        applyFullscreenFriendlyBehavior()
 
         // Cancel any in-flight fade-out; fade in when appearing from hidden.
         isFadingOut = false
@@ -261,9 +307,12 @@ final class OverlayPanel: NSPanel {
 
     /// Reduce an ECDICT translation to just the gist: drop the part-of-speech markers
     /// (n./vt./a.…) and domain tags ([医]/[计]…), then keep only the first `maxSenses`
-    /// comma-separated meanings of the most common entry. So "n. 苹果, 家伙\n[医] 苹果"
-    /// becomes "苹果, 家伙".
-    static func collapse(_ translation: String, maxSenses: Int) -> String {
+    /// comma-separated meanings of the chosen entry. When `preferredPOS` is set, prefer
+    /// the line whose marker matches (e.g. verb → `vt.` / `vi.`); otherwise the first
+    /// POS line. So "n. 苹果, 家伙\n[医] 苹果" becomes "苹果, 家伙".
+    static func collapse(_ translation: String,
+                         maxSenses: Int,
+                         preferredPOS: SensePicker.POSKind? = nil) -> String {
         let lines = translation
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -271,9 +320,16 @@ final class OverlayPanel: NSPanel {
 
         // A leading part-of-speech marker, e.g. "n. ", "vt. ", "prep. ".
         let posMarker = #/^[a-zA-Z]{1,5}\.\s*/#
-        // Prefer the first real POS line; skip domain tags ("[医] …") and grammar notes
-        // ("run的过去式…") that carry no POS marker. Fall back if nothing qualifies.
-        guard var sense = lines.first(where: { $0.firstMatch(of: posMarker) != nil })
+
+        let preferredMarkers = preferredPOS.map { SensePicker.ecdictMarkers(for: $0) } ?? []
+        let preferredLine: String? = preferredMarkers.isEmpty ? nil : lines.first { line in
+            guard let marker = Self.ecdictMarker(in: line) else { return false }
+            return preferredMarkers.contains(marker)
+        }
+
+        // Prefer context POS match → first real POS line → non-domain line → anything.
+        guard var sense = preferredLine
+            ?? lines.first(where: { $0.firstMatch(of: posMarker) != nil })
             ?? lines.first(where: { !$0.hasPrefix("[") })
             ?? lines.first
         else { return "" }
@@ -288,6 +344,13 @@ final class OverlayPanel: NSPanel {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         return senses.prefix(max(1, maxSenses)).joined(separator: ", ")
+    }
+
+    /// Leading ECDICT marker on `line` ("vt", "n", …), lowercased, without the dot.
+    private static func ecdictMarker(in line: String) -> String? {
+        let marker = #/^[a-zA-Z]{1,5}\./#
+        guard let m = line.firstMatch(of: marker) else { return nil }
+        return String(m.0.dropLast()).lowercased()
     }
 
     /// Widest rendered line of `text` (text may contain explicit newlines), in points.

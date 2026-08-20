@@ -193,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Shared capture → OCR → hit-test → show/hide path for hover and click.
-    /// `fromClick` tightens UI-chrome skipping (isolated Title-Case labels).
+    /// `fromClick` makes the panel speak immediately (and re-speak on another click).
     private func handleLookup(at cursorGlobal: CGPoint, fromClick: Bool) {
         // Moving onto / clicking the popup dismisses it (the panel ignores the mouse).
         if panel.isVisible && panel.frame.contains(cursorGlobal) {
@@ -230,14 +230,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 hit = rawHit
             }
 
-            // Look up the definition off the main thread (DictionaryService is synchronous).
-            let entry = hit.flatMap { self.dictionary?.lookup($0.text) }
+            // Look up off the main thread; use OCR neighbors to prefer a matching POS sense.
+            let entry: DictionaryEntry?
+            let preferredPOS: SensePicker.POSKind?
+            if let hit {
+                let phrase = CoordinateMapper.contextPhrase(around: hit, in: hits)
+                preferredPOS = SensePicker.lexicalPOS(of: hit.text, in: phrase)
+                entry = self.dictionary?.lookup(hit.text)
+            } else {
+                preferredPOS = nil
+                entry = nil
+            }
 
             await MainActor.run {
                 // Cursor moved (or mode changed) while we were working — drop the result.
                 guard generation == self.lookupGeneration else { return }
                 if let hit {
-                    self.panel.show(word: hit.text, entry: entry, below: cursorGlobal)
+                    self.panel.show(word: hit.text,
+                                    entry: entry,
+                                    preferredPOS: preferredPOS,
+                                    forceSpeak: fromClick,
+                                    below: cursorGlobal)
                 } else {
                     // Strict mode: nothing directly under the cursor → hide the panel.
                     self.panel.hidePanel(animated: true)

@@ -5,6 +5,8 @@ import CoreGraphics
 ///
 /// Skips:
 ///   • numeric tokens (123, 3.14, 50%, $12, 1st, 2024-08-20, 16:9, …)
+///   • AI thinking / tool-call status ("Thinking", "Thought", "Running", …)
+///   • closed-class / ultra-basic words (the, is, and, of, …)
 ///   • UI chrome — isolated short labels like buttons ("Send", "OK", "New Chat")
 enum LookupFilter {
 
@@ -15,12 +17,10 @@ enum LookupFilter {
         if token.isEmpty { return true }
         if !token.contains(where: \.isLetter) { return true }   // digits / punctuation only
         if isNumericToken(token) { return true }
-        // Isolated icon letters (X close, Q search) — keep "a" / "I" as real words.
-        let letters = token.filter(\.isLetter)
-        if letters.count == 1 {
-            let c = letters.lowercased()
-            if c != "a" && c != "i" { return true }
-        }
+        let lower = token.lowercased()
+        if alwaysSkip.contains(lower) { return true }
+        // Isolated icon letters (X close, Q search) and single-letter words (a / I).
+        if token.filter(\.isLetter).count == 1 { return true }
         return isUIChrome(hit, in: words, fromClick: fromClick)
     }
 
@@ -142,6 +142,56 @@ enum LookupFilter {
         raw.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: .punctuationCharacters)
     }
+
+    /// Always skipped, even inside a sentence: AI status chrome + function words
+    /// and a handful of ultra-basic tokens that are noise for a hover dictionary.
+    private static let alwaysSkip: Set<String> = [
+        // AI thinking / tool-call indicators (Claude, Cursor, ChatGPT, …)
+        "thinking", "thought", "thoughts",
+        "running", "reasoning",
+        "generating", "streaming",
+        "analyzing", "analysing", "considering",
+        "working", "loading", "waiting",
+        "researching", "searching",
+        // Articles, pronouns
+        "a", "an", "the",
+        "i", "me", "my", "mine", "myself",
+        "you", "your", "yours", "yourself", "yourselves",
+        "he", "him", "his", "himself",
+        "she", "her", "hers", "herself",
+        "it", "its", "itself",
+        "we", "us", "our", "ours", "ourselves",
+        "they", "them", "their", "theirs", "themselves",
+        "this", "that", "these", "those",
+        "who", "whom", "whose", "which", "what",
+        "where", "when", "why", "how",
+        // Be / do / have + modals
+        "is", "am", "are", "was", "were", "be", "been", "being",
+        "do", "does", "did", "doing", "done",
+        "have", "has", "had", "having",
+        "will", "would", "can", "could", "shall", "should",
+        "may", "might", "must",
+        // Prepositions, conjunctions, particles
+        "of", "to", "in", "on", "at", "for", "with", "from", "by",
+        "as", "about", "into", "through", "during", "before", "after",
+        "above", "below", "between", "under", "out", "up", "down",
+        "off", "over", "again", "further", "then", "once",
+        "and", "but", "or", "nor", "so", "yet",
+        "if", "because", "while", "although", "though", "unless",
+        "until", "whether",
+        "not", "no", "yes", "ok", "okay",
+        "there", "here", "now",
+        "all", "each", "every", "both", "few", "more", "most",
+        "other", "some", "any", "such",
+        "only", "own", "same", "than", "too", "very",
+        "just", "also", "even", "still", "already",
+        // Ultra-basic content
+        "get", "got", "gets", "getting",
+        "go", "goes", "going", "went", "gone",
+        "come", "comes", "coming", "came",
+        "good", "bad", "big", "small",
+        "one", "two", "three",
+    ]
 
     /// Standalone control labels. Only applied to *isolated* clusters, so "send" in
     /// "please send it" still looks up.

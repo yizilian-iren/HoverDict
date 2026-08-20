@@ -37,6 +37,14 @@ final class ScreenCapturer {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        // Fullscreen enter/exit rebuilds Spaces; cached SCDisplay can go stale and
+        // capture then silently fails until something else refreshes the cache.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(screenLayoutChanged),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
     }
 
     @objc private func screenLayoutChanged() {
