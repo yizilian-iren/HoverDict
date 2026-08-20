@@ -88,11 +88,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         mouseMonitor.onCursorStill = { [weak self] cursorGlobal in
             guard let self, !self.clickModeEnabled else { return }
-            self.handleLookup(at: cursorGlobal)
+            self.handleLookup(at: cursorGlobal, fromClick: false)
         }
         mouseMonitor.onClick = { [weak self] cursorGlobal in
             guard let self, self.clickModeEnabled else { return }
-            self.handleLookup(at: cursorGlobal)
+            self.handleLookup(at: cursorGlobal, fromClick: true)
         }
         // Any cursor movement fades the popup out (click mode especially needs this;
         // hover mode also benefits — hide immediately, then re-show after stillness).
@@ -193,7 +193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Shared capture → OCR → hit-test → show/hide path for hover and click.
-    private func handleLookup(at cursorGlobal: CGPoint) {
+    /// `fromClick` tightens UI-chrome skipping (isolated Title-Case labels).
+    private func handleLookup(at cursorGlobal: CGPoint, fromClick: Bool) {
         // Moving onto / clicking the popup dismisses it (the panel ignores the mouse).
         if panel.isVisible && panel.frame.contains(cursorGlobal) {
             lookupGeneration += 1
@@ -219,7 +220,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let words = self.ocr.recognizeWords(in: capture.cgImage)
             let hits = CoordinateMapper.resolve(words: words,
                                                 captureRectGlobal: capture.captureRectGlobal)
-            let hit = CoordinateMapper.wordUnderCursor(hits, cursorGlobal: cursorGlobal)
+            let rawHit = CoordinateMapper.wordUnderCursor(hits, cursorGlobal: cursorGlobal)
+            // Skip numbers and isolated UI labels (buttons / toolbar items) so clicking
+            // "Send" or hovering "123" doesn't pop a translation.
+            let hit: WordHit?
+            if let rawHit, LookupFilter.shouldSkip(rawHit, in: hits, fromClick: fromClick) {
+                hit = nil
+            } else {
+                hit = rawHit
+            }
 
             // Look up the definition off the main thread (DictionaryService is synchronous).
             let entry = hit.flatMap { self.dictionary?.lookup($0.text) }
