@@ -43,6 +43,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isProcessing = false
     /// Bumped on mouse-move dismiss so an in-flight OCR result won't re-show the panel.
     private var lookupGeneration = 0
+    /// Click mode: where the last take-word click happened. Movement within
+    /// `clickDismissRadius` of it (hand jitter after clicking) keeps the popup open.
+    private var clickAnchor: CGPoint?
+    private let clickDismissRadius: CGFloat = 12
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Always set up the menu-bar control and the monitor FIRST, unconditionally.
@@ -99,12 +103,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         mouseMonitor.onClick = { [weak self] cursorGlobal in
             guard let self, self.clickModeEnabled else { return }
+            self.clickAnchor = cursorGlobal
             self.handleLookup(at: cursorGlobal, fromClick: true)
         }
-        // Any cursor movement fades the popup out (click mode especially needs this;
-        // hover mode also benefits — hide immediately, then re-show after stillness).
-        mouseMonitor.onMouseMoved = { [weak self] _ in
-            self?.dismissPanelForMouseMove()
+        // Cursor movement fades the popup out (hover mode: any movement — hide
+        // immediately, then re-show after stillness; click mode: only once the cursor
+        // leaves `clickDismissRadius` around the click).
+        mouseMonitor.onMouseMoved = { [weak self] point in
+            self?.dismissPanelForMouseMove(at: point)
         }
         mouseMonitor.start()
 
@@ -176,8 +182,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Fade-dismiss on cursor movement; also invalidates any in-flight lookup.
-    private func dismissPanelForMouseMove() {
+    private func dismissPanelForMouseMove(at point: CGPoint) {
         guard panel.isVisible || isProcessing else { return }
+        if clickModeEnabled, let anchor = clickAnchor,
+           hypot(point.x - anchor.x, point.y - anchor.y) <= clickDismissRadius {
+            return
+        }
+        clickAnchor = nil
         lookupGeneration += 1
         if panel.isVisible {
             panel.hidePanel(animated: true)
