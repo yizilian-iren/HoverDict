@@ -8,6 +8,7 @@ import CoreGraphics
 ///   • AI thinking / tool-call status ("Thinking", "Thought", "Running", …)
 ///   • closed-class / ultra-basic words (the, is, and, of, …)
 ///   • UI chrome — isolated short labels like buttons ("Send", "OK", "New Chat")
+///   • CJK tokens on the English path (Chinese / Japanese text — Japanese has its own path)
 enum LookupFilter {
 
     /// `fromClick` is stricter: an isolated Title-Case label is treated as a control,
@@ -16,6 +17,8 @@ enum LookupFilter {
         let token = normalize(hit.text)
         if token.isEmpty { return true }
         if !token.contains(where: \.isLetter) { return true }   // digits / punctuation only
+        // No Latin letters → Chinese/Japanese text, not an English word.
+        if !token.unicodeScalars.contains(where: { $0.isASCII && $0.properties.isAlphabetic }) { return true }
         if isNumericToken(token) { return true }
         let lower = token.lowercased()
         if alwaysSkip.contains(lower) { return true }
@@ -23,6 +26,33 @@ enum LookupFilter {
         if token.filter(\.isLetter).count == 1 { return true }
         return isUIChrome(hit, in: words, fromClick: fromClick)
     }
+
+    // MARK: - Japanese
+
+    /// True for particles, auxiliaries and lone kana — noise for a Japanese hover
+    /// dictionary (は would otherwise resolve to 葉/歯).
+    static func shouldSkipJapanese(_ term: String) -> Bool {
+        let t = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard JapaneseText.isAllHiragana(t) else { return false }
+        return t.count == 1 || japaneseFunctionWords.contains(t)
+    }
+
+    private static let japaneseFunctionWords: Set<String> = [
+        // Particles
+        "から", "まで", "より", "ので", "のに", "けど", "けれど", "けれども",
+        "ながら", "たり", "だり", "など", "なら", "って", "とか", "だけ", "しか",
+        "ばかり", "ほど", "くらい", "ぐらい", "でも", "では", "には", "とは",
+        "への", "での", "との", "からの", "までの", "ね", "よね", "かな",
+        // Copula / auxiliaries
+        "です", "でした", "でしょう", "だった", "だろう", "である",
+        "ます", "ました", "ません", "ましょう", "ない", "なかった",
+        "たい", "られる", "れる", "せる", "させる",
+        // Very common function-like verbs / nouns
+        "する", "した", "して", "します", "しました", "いる", "いた", "います",
+        "ある", "あった", "あります", "なる", "なった", "こと", "もの", "ため",
+        "この", "その", "あの", "どの", "これ", "それ", "あれ", "どれ",
+        "ここ", "そこ", "あそこ", "よう", "そう",
+    ]
 
     // MARK: - Numbers
 

@@ -76,6 +76,53 @@ enum CoordinateMapper {
         return best
     }
 
+    /// Japanese hit test: the line under the cursor, and the UTF-16 offset of the character
+    /// the cursor sits on (DictionaryServices then finds the word around that offset).
+    ///
+    /// Returns nil unless the line contains kana — a pure-kanji line is far more likely
+    /// Chinese (our user reads Chinese natively), so it is left alone.
+    static func japaneseTarget(in lines: [RecognizedLine],
+                               captureRectGlobal: CGRect,
+                               cursorGlobal: CGPoint,
+                               topMargin: CGFloat = 6) -> (line: String, utf16Offset: Int)? {
+        var bestLine: RecognizedLine?
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+        for line in lines {
+            let box = globalRect(forNormalizedBox: line.normalizedBox, captureRectGlobal: captureRectGlobal)
+            guard cursorGlobal.x >= box.minX, cursorGlobal.x <= box.maxX,
+                  cursorGlobal.y >= box.minY, cursorGlobal.y <= box.maxY + topMargin else { continue }
+            let distance = abs(cursorGlobal.y - box.midY)
+            if distance < bestDistance {
+                bestDistance = distance
+                bestLine = line
+            }
+        }
+        guard let line = bestLine, JapaneseText.containsKana(line.text) else { return nil }
+
+        // Per-character boxes: pick the character whose box contains (or is nearest to)
+        // the cursor horizontally.
+        let text = line.text
+        var bestChar: (index: String.Index, distance: CGFloat)?
+        var i = text.startIndex
+        while i < text.endIndex {
+            let next = text.index(after: i)
+            if let obs = try? line.candidate.boundingBox(for: i..<next) {
+                let box = globalRect(forNormalizedBox: obs.boundingBox, captureRectGlobal: captureRectGlobal)
+                let distance = cursorGlobal.x < box.minX ? box.minX - cursorGlobal.x
+                             : cursorGlobal.x > box.maxX ? cursorGlobal.x - box.maxX
+                             : 0
+                if bestChar == nil || distance < bestChar!.distance {
+                    bestChar = (i, distance)
+                }
+            }
+            i = next
+        }
+        guard let hit = bestChar, hit.distance <= 2, JapaneseText.isJapanese(text[hit.index]) else {
+            return nil
+        }
+        return (text, text.utf16.distance(from: text.startIndex, to: hit.index))
+    }
+
     /// Nearby words on the same visual line as `target`, joined into a short phrase
     /// for POS tagging (±`window` tokens). Falls back to the bare word if nothing
     /// else shares the line.

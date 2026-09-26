@@ -22,6 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let soundKey = "HoverDict.soundEnabled"
     /// UserDefaults key for the persisted click-to-show switch.
     private let clickModeKey = "HoverDict.clickToShow"
+    /// When true, text the English pass can't define is re-read as Japanese.
+    private var japaneseEnabled = true
+    /// UserDefaults key for the persisted Japanese switch.
+    private let japaneseKey = "HoverDict.japanese"
 
     private let dictionary: DictionaryService? = {
         // Bundled ECDICT database (copied into Contents/Resources by build_app.sh).
@@ -31,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("HoverDict: ecdict.db not found in bundle — definitions disabled.")
         return nil
     }()
+
+    /// macOS's built-in 日中辞典; nil when it isn't installed (Japanese then stays off).
+    private let japaneseDictionary = JapaneseDictionary()
 
     // Guards against overlapping capture/OCR passes if the cursor keeps settling.
     private var isProcessing = false
@@ -118,6 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.setClickModeEnabled(!self.clickModeEnabled)
         }
+        bar.onToggleJapanese = { [weak self] in
+            guard let self else { return }
+            self.setJapaneseEnabled(!self.japaneseEnabled)
+        }
         bar.onOpenSettings = {
             PermissionManager.openScreenRecordingSettings()
         }
@@ -134,16 +145,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clickModeEnabled = savedClickMode
         bar.setClickModeEnabled(savedClickMode)
 
+        // Restore the saved Japanese switch (default on).
+        japaneseEnabled = UserDefaults.standard.object(forKey: japaneseKey) as? Bool ?? true
+        bar.setJapaneseEnabled(japaneseEnabled, available: japaneseDictionary != nil)
+        warmUpJapaneseIfNeeded()
+
         statusBar = bar
 
-        // Global hotkey ⌘⇧A toggles take-word on/off (no Accessibility permission needed).
+        // Global hotkey ⌥⇧A toggles take-word on/off (no Accessibility permission needed).
         hotKey.onTrigger = { [weak self] in
             guard let self else { return }
             self.setPaused(!self.isPaused)
         }
         hotKey.register()
 
-        NSLog("HoverDict: running. Hover (or click, if enabled) over English text to take a word. (⌘⇧A toggles)")
+        NSLog("HoverDict: running. Hover (or click, if enabled) over English or Japanese text to take a word. (⌥⇧A toggles)")
     }
 
     /// Pause/resume take-word. Drives the monitor, the panel, and the menu-bar UI.
@@ -192,7 +208,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.hidePanel(animated: false)
     }
 
+    /// Toggle and persist Japanese take-word.
+    private func setJapaneseEnabled(_ enabled: Bool) {
+        japaneseEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: japaneseKey)
+        statusBar?.setJapaneseEnabled(enabled, available: japaneseDictionary != nil)
+        warmUpJapaneseIfNeeded()
+    }
+
+    private func warmUpJapaneseIfNeeded() {
+        guard japaneseEnabled, japaneseDictionary != nil else { return }
+        DispatchQueue.global(qos: .utility).async { [ocr] in
+            ocr.warmUpJapanese()
+        }
+    }
+
     /// Shared capture → OCR → hit-test → show/hide path for hover and click.
+    ///
+    /// Two OCR passes, because Vision only really uses the FIRST recognition language:
+    /// ["en-US"] alone is fastest and most accurate for English, while ["ja-JP", …] is the
+    /// only way to read kana. So English runs first; only when it yields no definition
+    /// (Japanese / Chinese text, noise) is the same image re-read as Japanese.
     /// `fromClick` makes the panel speak immediately (and re-speak on another click).
     private func handleLookup(at cursorGlobal: CGPoint, fromClick: Bool) {
         // Moving onto / clicking the popup dismisses it (the panel ignores the mouse).
@@ -204,6 +240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isProcessing else { return }
         isProcessing = true
         let generation = lookupGeneration
+        let japaneseDictionary = japaneseEnabled ? self.japaneseDictionary : nil
 
         Task { [weak self] in
             guard let self else { return }
@@ -217,7 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            let words = self.ocr.recognizeWords(in: capture.cgImage)
+            let words = self.ocr.recognize(in: capture.cgImage, includeJapanese: false).words
             let hits = CoordinateMapper.resolve(words: words,
                                                 captureRectGlobal: capture.captureRectGlobal)
             let rawHit = CoordinateMapper.wordUnderCursor(hits, cursorGlobal: cursorGlobal)
@@ -242,10 +279,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 entry = nil
             }
 
+            // English found nothing to define → re-read as Japanese. `onJapanese` means the
+            // cursor is on a kana line: then show the Japanese result or nothing (a particle
+            // like は), never the English "not found" for OCR noise.
+            let onJapanese: Bool
+            let japaneseEntry: JapaneseEntry?
+            if entry == nil, let japaneseDictionary,
+               let target = CoordinateMapper.japaneseTarget(
+                   in: self.ocr.recognize(in: capture.cgImage, includeJapanese: true).lines,
+                   captureRectGlobal: capture.captureRectGlobal,
+                   cursorGlobal: cursorGlobal) {
+                onJapanese = true
+                japaneseEntry = japaneseDictionary.lookup(line: target.line,
+                                                          utf16Offset: target.utf16Offset)
+            } else {
+                onJapanese = false
+                japaneseEntry = nil
+            }
+
             await MainActor.run {
                 // Cursor moved (or mode changed) while we were working — drop the result.
                 guard generation == self.lookupGeneration else { return }
-                if let hit {
+                if onJapanese {
+                    if let japaneseEntry {
+                        self.panel.showJapanese(japaneseEntry,
+                                                forceSpeak: fromClick,
+                                                below: cursorGlobal)
+                    } else {
+                        self.panel.hidePanel(animated: true)
+                    }
+                } else if let hit {
                     self.panel.show(word: hit.text,
                                     entry: entry,
                                     preferredPOS: preferredPOS,

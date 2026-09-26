@@ -2,9 +2,10 @@ import AppKit
 import AVFoundation
 import QuartzCore
 
-/// The hover popup: a compact, non-activating, pass-through floating panel showing ONLY
-/// the (collapsed) Chinese translation — no English headword, no phonetic. The word is
-/// auto-spoken when the popup appears. The panel ignores the mouse entirely, and the
+/// The hover popup: a compact, non-activating, pass-through floating panel. English shows
+/// ONLY the (collapsed) Chinese translation — no headword, no phonetic; Japanese adds a
+/// headword + kana line, since the reading is the point. The word is auto-spoken when the
+/// popup appears. The panel ignores the mouse entirely, and the
 /// pipeline dismisses it (with a fade) as soon as the cursor moves.
 final class OverlayPanel: NSPanel {
 
@@ -12,7 +13,7 @@ final class OverlayPanel: NSPanel {
     // Must be retained for the lifetime of speech, otherwise it deallocates mid-utterance.
     private let synthesizer = AVSpeechSynthesizer()
 
-    /// The English word to pronounce (what's actually under the cursor).
+    /// The word to pronounce (English word, or Japanese kana reading).
     private(set) var spokenWord: String = ""
     /// Tracks the currently displayed word so we auto-speak only when it CHANGES,
     /// not every time the pipeline re-fires on the same word.
@@ -34,7 +35,7 @@ final class OverlayPanel: NSPanel {
     private let fadeOutDuration: TimeInterval = 0.18
 
     /// Background translucency (0 = invisible, 1 = opaque). Text stays fully opaque.
-    private let backgroundAlpha: CGFloat = 0.8
+    private let backgroundAlpha: CGFloat = 0.99
 
     /// The popup width adapts to the text, between these bounds; only past the max does
     /// the translation wrap onto more lines.
@@ -162,15 +163,60 @@ final class OverlayPanel: NSPanel {
               preferredPOS: SensePicker.POSKind? = nil,
               forceSpeak: Bool = false,
               below cursorGlobal: CGPoint) {
-        spokenWord = word
-
+        let text: String
         if let translation = entry?.translation {
-            translationLabel.stringValue = Self.collapse(translation,
-                                                         maxSenses: maxSenses,
-                                                         preferredPOS: preferredPOS)
+            text = Self.collapse(translation, maxSenses: maxSenses, preferredPOS: preferredPOS)
         } else {
-            translationLabel.stringValue = "（未找到释义）"
+            text = "（未找到释义）"
         }
+        translationLabel.maximumNumberOfLines = 3      // collapse: cap the box height
+        translationLabel.attributedStringValue = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 13),
+            .foregroundColor: NSColor.labelColor,
+        ])
+        present(speaking: word, language: "en", forceSpeak: forceSpeak, below: cursorGlobal)
+    }
+
+    /// Japanese popup: 「食べる  たべる」 on the first line, Chinese senses below.
+    /// Speaks the kana reading (never the kanji, whose reading TTS might guess wrong).
+    func showJapanese(_ entry: JapaneseEntry,
+                      forceSpeak: Bool = false,
+                      below cursorGlobal: CGPoint) {
+        translationLabel.maximumNumberOfLines = 4
+        translationLabel.attributedStringValue = Self.japaneseText(entry)
+        present(speaking: entry.reading ?? entry.headword,
+                language: "ja",
+                forceSpeak: forceSpeak,
+                below: cursorGlobal)
+    }
+
+    private static func japaneseText(_ entry: JapaneseEntry) -> NSAttributedString {
+        let text = NSMutableAttributedString(string: entry.headword, attributes: [
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+        ])
+        if let reading = entry.reading {
+            text.append(NSAttributedString(string: "  " + reading, attributes: [
+                .font: NSFont.systemFont(ofSize: 13),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+        }
+        let senses = entry.senses.isEmpty ? "（未找到释义）" : entry.senses.joined(separator: "；")
+        text.append(NSAttributedString(string: "\n" + senses, attributes: [
+            .font: NSFont.systemFont(ofSize: 13),
+            .foregroundColor: NSColor.labelColor,
+        ]))
+        return text
+    }
+
+    /// Shared by both languages: speech policy, adaptive sizing, placement, fade-in.
+    /// - Hover: auto-speaks only when the word changes (after a short dwell).
+    /// - Click (`forceSpeak`): speaks immediately — including a re-click of the same word.
+    private func present(speaking word: String,
+                         language: String,
+                         forceSpeak: Bool,
+                         below cursorGlobal: CGPoint) {
+        spokenWord = word
 
         let isNewWord = word.caseInsensitiveCompare(lastShownWord ?? "") != .orderedSame
         if isNewWord {
@@ -180,14 +226,13 @@ final class OverlayPanel: NSPanel {
         // Hover mode: only when the word changes, after a short dwell so sweeps stay quiet.
         if forceSpeak {
             speakTimer?.invalidate()
-            speak(word)
+            speak(word, language: language)
         } else if isNewWord {
-            scheduleAutoSpeak(word)
+            scheduleAutoSpeak(word, language: language)
         }
 
         // Adaptive width: fit the text up to maxContentWidth; only past that does it wrap.
-        let textWidth = Self.maxLineWidth(of: translationLabel.stringValue,
-                                          font: translationLabel.font ?? .systemFont(ofSize: 13))
+        let textWidth = Self.maxLineWidth(of: translationLabel.attributedStringValue)
         let clampedTextWidth = min(textWidth, maxContentWidth - hMargin * 2)
         let panelWidth = min(max(clampedTextWidth + hMargin * 2, minContentWidth), maxContentWidth)
         widthConstraint.constant = panelWidth
@@ -282,14 +327,15 @@ final class OverlayPanel: NSPanel {
 
     /// Speak `word` after `speakDelay`, cancelling any earlier pending speech. Fast
     /// sweeps keep rescheduling, so only a word the cursor lingers on is spoken.
-    private func scheduleAutoSpeak(_ word: String) {
+    private func scheduleAutoSpeak(_ word: String, language: String) {
         speakTimer?.invalidate()
         speakTimer = Timer.scheduledTimer(withTimeInterval: speakDelay, repeats: false) { [weak self] _ in
-            self?.speak(word)
+            self?.speak(word, language: language)
         }
     }
 
-    func speak(_ text: String) {
+    /// `language`: "en" or "ja" (Google TTS code; the system fallback voice follows it).
+    func speak(_ text: String, language: String = "en") {
         guard soundEnabled else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -297,10 +343,10 @@ final class OverlayPanel: NSPanel {
         synthesizer.stopSpeaking(at: .immediate)
         // Prefer the cached anime clip; fall back to the system voice for words that
         // haven't been pre-generated yet (the miss is logged for later pregen).
-        TTSPlayer.shared.play(trimmed) { [weak self] in
+        TTSPlayer.shared.play(trimmed, language: language) { [weak self] in
             guard let self else { return }
             let utterance = AVSpeechUtterance(string: trimmed)
-            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+            utterance.voice = AVSpeechSynthesisVoice(language: language == "ja" ? "ja-JP" : "en-US")
             self.synthesizer.speak(utterance)
         }
     }
@@ -353,13 +399,14 @@ final class OverlayPanel: NSPanel {
         return String(m.0.dropLast()).lowercased()
     }
 
-    /// Widest rendered line of `text` (text may contain explicit newlines), in points.
-    static func maxLineWidth(of text: String, font: NSFont) -> CGFloat {
-        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+    /// Widest rendered line of `text` (text may contain explicit newlines and mixed
+    /// fonts), in points.
+    static func maxLineWidth(of text: NSAttributedString) -> CGFloat {
         var widest: CGFloat = 0
-        for line in text.split(whereSeparator: \.isNewline) {
-            let w = (String(line) as NSString).size(withAttributes: attrs).width
-            widest = max(widest, w)
+        let ns = text.string as NSString
+        ns.enumerateSubstrings(in: NSRange(location: 0, length: ns.length),
+                               options: .byLines) { _, range, _, _ in
+            widest = max(widest, text.attributedSubstring(from: range).size().width)
         }
         return ceil(widest) + 1   // +1 guards against sub-pixel clipping
     }

@@ -14,9 +14,9 @@ final class HotKeyManager {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
 
-    /// Default = ⌘⇧A. Key codes are virtual keys (kVK_ANSI_A == 0).
+    /// Default = ⌥⇧A. Key codes are virtual keys (kVK_ANSI_A == 0).
     func register(keyCode: UInt32 = UInt32(kVK_ANSI_A),
-                  modifiers: UInt32 = UInt32(cmdKey | shiftKey)) {
+                  modifiers: UInt32 = UInt32(optionKey | shiftKey)) {
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                  eventKind: UInt32(kEventHotKeyPressed))
 

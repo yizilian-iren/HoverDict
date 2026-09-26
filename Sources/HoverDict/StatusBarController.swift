@@ -15,6 +15,8 @@ final class StatusBarController {
     var onToggleSound: (() -> Void)?
     /// User toggled click-to-show (vs hover) take-word mode.
     var onToggleClickMode: (() -> Void)?
+    /// User toggled Japanese take-word.
+    var onToggleJapanese: (() -> Void)?
     /// User picked "Screen Recording settings…".
     var onOpenSettings: (() -> Void)?
 
@@ -32,6 +34,7 @@ final class StatusBarController {
     private let toggleItem: NSMenuItem
     private let soundItem: NSMenuItem
     private let clickModeItem: NSMenuItem
+    private let japaneseItem: NSMenuItem
     private var delayItems: [NSMenuItem] = []
 
     init() {
@@ -55,7 +58,7 @@ final class StatusBarController {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        // Pause/resume. Show ⇧⌘A as a hint; the actual always-on hotkey is the Carbon
+        // Pause/resume. Show ⌥⇧A as a hint; the actual always-on hotkey is the Carbon
         // one in HotKeyManager. (Our app is .accessory and never active, so this menu
         // key-equivalent doesn't fire on its own — it's purely for discoverability.)
         toggleItem = NSMenuItem(title: "暂停取词",
@@ -68,7 +71,10 @@ final class StatusBarController {
         clickModeItem = NSMenuItem(title: "点击取词",
                                    action: #selector(toggleClickMode),
                                    keyEquivalent: "")
-        toggleItem.keyEquivalentModifierMask = [.command, .shift]
+        japaneseItem = NSMenuItem(title: "日语取词",
+                                  action: #selector(toggleJapanese),
+                                  keyEquivalent: "")
+        toggleItem.keyEquivalentModifierMask = [.option, .shift]
         toggleItem.target = self
         menu.addItem(toggleItem)
 
@@ -90,6 +96,10 @@ final class StatusBarController {
         // Click-to-show toggle (checkmark reflects state; set by setClickModeEnabled).
         clickModeItem.target = self
         menu.addItem(clickModeItem)
+
+        // Japanese toggle (checkmark reflects state; set by setJapaneseEnabled).
+        japaneseItem.target = self
+        menu.addItem(japaneseItem)
 
         // Speak-aloud toggle (checkmark reflects state; set by setSoundEnabled).
         soundItem.target = self
@@ -129,6 +139,14 @@ final class StatusBarController {
         clickModeItem.state = enabled ? .on : .off
     }
 
+    /// Reflect the Japanese switch. When the 日中辞典 isn't installed the item is disabled
+    /// and says how to get it.
+    func setJapaneseEnabled(_ enabled: Bool, available: Bool) {
+        japaneseItem.state = enabled && available ? .on : .off
+        japaneseItem.isEnabled = available
+        japaneseItem.title = available ? "日语取词" : "日语取词（需在「词典」App 启用日中辞典）"
+    }
+
     /// Tick the submenu item matching `value`.
     func markDelay(_ value: TimeInterval) {
         for item in delayItems {
@@ -147,6 +165,10 @@ final class StatusBarController {
 
     @objc private func toggleClickMode() {
         onToggleClickMode?()
+    }
+
+    @objc private func toggleJapanese() {
+        onToggleJapanese?()
     }
 
     @objc private func selectDelay(_ sender: NSMenuItem) {

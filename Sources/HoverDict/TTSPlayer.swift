@@ -12,8 +12,9 @@ final class TTSPlayer {
     static let shared = TTSPlayer()
 
     /// Cached clips: `<key>.mp3` in
-    /// ~/Library/Application Support/HoverDict/tts/google/
-    private let cacheDir: URL
+    /// ~/Library/Application Support/HoverDict/tts/google/      (English)
+    /// ~/Library/Application Support/HoverDict/tts/google-<lang>/ (other languages, e.g. ja)
+    private let cacheRoot: URL
 
     /// Retained for the lifetime of playback, else it deallocates mid-clip.
     private var player: AVAudioPlayer?
@@ -26,11 +27,17 @@ final class TTSPlayer {
     private init() {
         let support = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        cacheDir = support
+        cacheRoot = support
             .appendingPathComponent("HoverDict", isDirectory: true)
             .appendingPathComponent("tts", isDirectory: true)
-            .appendingPathComponent("google", isDirectory: true)
-        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+    }
+
+    /// English keeps the original `google/` folder so existing caches stay valid.
+    private func cacheDir(for language: String) -> URL {
+        let dir = cacheRoot.appendingPathComponent(language == "en" ? "google" : "google-\(language)",
+                                                   isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     /// Map a word to its cache filename stem: trimmed, lowercased, path-unsafe chars swapped.
@@ -43,7 +50,8 @@ final class TTSPlayer {
 
     /// Speak `word`: play the cached clip if present, else fetch it from Google, cache it,
     /// and play it. On any failure run `fallback` (system voice). Non-blocking.
-    func play(_ word: String, fallback: @escaping () -> Void) {
+    /// `language` is Google's `tl` code: "en", "ja".
+    func play(_ word: String, language: String = "en", fallback: @escaping () -> Void) {
         let key = Self.key(for: word)
         guard !key.isEmpty else { return }
 
@@ -52,13 +60,13 @@ final class TTSPlayer {
         // Stop whatever clip might still be playing from the previous word.
         player?.stop()
 
-        let url = cacheDir.appendingPathComponent(key + ".mp3")
+        let url = cacheDir(for: language).appendingPathComponent(key + ".mp3")
         if FileManager.default.fileExists(atPath: url.path) {
             playClip(at: url, ifCurrent: seq)
             return
         }
 
-        fetch(word: word) { [weak self] data in
+        fetch(word: word, language: language) { [weak self] data in
             guard let self else { return }
             guard let data, !data.isEmpty else {
                 DispatchQueue.main.async { if seq == self.requestSeq { fallback() } }
@@ -79,12 +87,12 @@ final class TTSPlayer {
 
     /// Hit Google's translate_tts endpoint for a single word; hands back mp3 bytes, or nil
     /// on any non-audio / error response.
-    private func fetch(word: String, completion: @escaping (Data?) -> Void) {
+    private func fetch(word: String, language: String, completion: @escaping (Data?) -> Void) {
         var comps = URLComponents(string: "https://translate.google.com/translate_tts")!
         comps.queryItems = [
             .init(name: "ie", value: "UTF-8"),
             .init(name: "client", value: "tw-ob"),  // keyless web-client mode
-            .init(name: "tl", value: "en"),
+            .init(name: "tl", value: language),
             .init(name: "q", value: word),
         ]
         guard let url = comps.url else { completion(nil); return }

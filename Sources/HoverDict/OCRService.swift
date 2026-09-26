@@ -9,31 +9,60 @@ struct RecognizedWord {
     let normalizedBox: CGRect
 }
 
+/// A whole recognized line. Japanese has no spaces, so the Japanese path hit-tests
+/// per character on the line and lets the dictionary decide where the word ends.
+struct RecognizedLine {
+    let text: String
+    let normalizedBox: CGRect
+    /// Kept so per-character boxes can be requested lazily for the one line under the cursor.
+    let candidate: VNRecognizedText
+}
+
+struct OCRResult {
+    let words: [RecognizedWord]
+    let lines: [RecognizedLine]
+}
+
 /// Runs Vision text recognition on a captured image and returns per-word boxes.
 final class OCRService {
 
-    func recognizeWords(in image: CGImage) -> [RecognizedWord] {
+    /// The ja-JP model takes ~17 s to load the first time a new build runs it (then it is
+    /// cached). Run one blank pass at launch so the first real hover isn't stuck on that.
+    func warmUpJapanese() {
+        guard let ctx = CGContext(data: nil, width: 32, height: 32, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: CGColorSpaceCreateDeviceGray(),
+                                  bitmapInfo: CGImageAlphaInfo.none.rawValue),
+              let blank = ctx.makeImage() else { return }
+        _ = recognize(in: blank, includeJapanese: true)
+    }
+
+    /// `includeJapanese` adds ja-JP (which also reads Latin text); off → English only.
+    func recognize(in image: CGImage, includeJapanese: Bool) -> OCRResult {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate          // spec: accuracy = .accurate
         request.usesLanguageCorrection = true
-        request.recognitionLanguages = ["en-US"]      // Phase 1: English only
+        request.recognitionLanguages = includeJapanese ? ["ja-JP", "en-US"] : ["en-US"]
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         do {
             try handler.perform([request])
         } catch {
             NSLog("HoverDict: OCR failed: \(error)")
-            return []
+            return OCRResult(words: [], lines: [])
         }
 
-        guard let observations = request.results else { return [] }
+        guard let observations = request.results else { return OCRResult(words: [], lines: []) }
 
         var words: [RecognizedWord] = []
+        var lines: [RecognizedLine] = []
         for observation in observations {
             // Each observation is a recognized *line*. Take the best candidate and
             // split it into words, asking Vision for each word's tight box.
             guard let candidate = observation.topCandidates(1).first else { continue }
             let string = candidate.string
+            lines.append(RecognizedLine(text: string,
+                                        normalizedBox: observation.boundingBox,
+                                        candidate: candidate))
 
             for range in wordRanges(in: string) {
                 // boundingBox(for:) maps a substring range back to image coordinates.
@@ -46,7 +75,7 @@ final class OCRService {
                 words.append(RecognizedWord(text: word, normalizedBox: box))
             }
         }
-        return words
+        return OCRResult(words: words, lines: lines)
     }
 
     /// Split a string into word ranges using the Unicode-aware word enumerator,
