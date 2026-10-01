@@ -341,8 +341,8 @@ final class OverlayPanel: NSPanel {
         guard !trimmed.isEmpty else { return }
         // Cut off any system speech still running from the previous word.
         synthesizer.stopSpeaking(at: .immediate)
-        // Prefer the cached anime clip; fall back to the system voice for words that
-        // haven't been pre-generated yet (the miss is logged for later pregen).
+        // Prefer the Google TTS clip (cached, or fetched now); fall back to the system
+        // voice when it can't be fetched.
         TTSPlayer.shared.play(trimmed, language: language) { [weak self] in
             guard let self else { return }
             let utterance = AVSpeechUtterance(string: trimmed)

@@ -8,13 +8,15 @@
 # the terminal, not to HoverDict, so the permission wouldn't stick. Always launch the
 # generated .app — never the raw binary.
 #
-# Signing:
-#   - By default we ad-hoc sign (codesign -s -). Good enough to run locally.
-#     Caveat: ad-hoc identity is the binary's cdhash, so every rebuild changes it and
-#     you may have to re-grant Screen Recording.
-#   - To use a real cert instead (stable permission across rebuilds, path to notarization):
-#       CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)" ./Scripts/build_app.sh
-#     List candidates with:  security find-identity -v -p codesigning
+# Signing (first match wins):
+#   1. CODESIGN_IDENTITY, when set — a real cert (path to notarization):
+#        CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)" ./Scripts/build_app.sh
+#      List candidates with:  security find-identity -v -p codesigning
+#   2. The local self-signed "HoverDict Dev" cert, when Scripts/create_signing_cert.sh
+#      has created it. Stable across rebuilds, so Screen Recording is granted once.
+#   3. Ad-hoc (codesign -s -). Good enough to run locally, but its identity is the
+#      binary's cdhash: every rebuild changes it and you may have to re-grant
+#      Screen Recording.
 #
 set -euo pipefail
 
