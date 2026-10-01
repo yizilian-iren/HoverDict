@@ -52,7 +52,8 @@ xattr -dr com.apple.quarantine /Applications/HoverDict.app
 - 🖱️ **悬停取词**:光标静止约 0.2s 即触发,无需点击;延迟可在菜单栏「取词延迟」里调(即时 ~ 0.8s),会记住
 - 👆 **点击取词**:菜单栏勾选「点击取词」后,只有点一下才弹释义,移动鼠标不再触发
 - 🔤 **屏幕 OCR**:基于 Vision,适配 Electron/Chromium/WebKit 渲染的文字
-- 🇨🇳 **中文释义 + 音标**:离线本地词库([ECDICT](https://github.com/skywind3000/ECDICT)),含词形还原(running→run);按上下文挑词性对应的释义(record 作动词还是名词)
+- 🇨🇳 **中文释义**:优先用 macOS 自带的牛津英汉词典,每个义项前带语境提示(dismiss →「(reject) 对…不予考虑」);它没收的词(多为专业词、缩写)用内置的离线词库 [ECDICT](https://github.com/skywind3000/ECDICT)。含词形还原(running→run),并按上下文挑词性对应的释义(record 作动词还是名词)。
+  牛津英汉需先在「词典」App → 设置里勾选 **简体中文 - 英语**;没勾选时全部用 ECDICT
 - 🇯🇵 **日语取词**:停在含假名的日语上,显示「原形 读音」和中文释义(食べました→食べる【たべる】)。用的是 macOS 自带的日中辞典,需先在「词典」App → 设置里勾选 **简体中文 - 日语**;没启用时菜单项是灰的。可在菜单栏关闭
 - 🙈 **少打扰**:数字、孤立的按钮文案(Send、OK)、the / is 这类基础词、Thinking 之类的状态文字不弹
 - 🔊 **自动朗读**:停留约半秒后朗读,可在菜单栏「朗读发声」关闭

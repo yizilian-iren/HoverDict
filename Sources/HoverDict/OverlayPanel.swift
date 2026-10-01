@@ -3,7 +3,8 @@ import AVFoundation
 import QuartzCore
 
 /// The hover popup: a compact, non-activating, pass-through floating panel. English shows
-/// ONLY the (collapsed) Chinese translation — no headword, no phonetic; Japanese adds a
+/// ONLY the Chinese — a few labelled Oxford senses, or the collapsed ECDICT translation
+/// when Oxford has no entry — no headword, no phonetic; Japanese adds a
 /// headword + kana line, since the reading is the point. The word is auto-spoken when the
 /// popup appears. The panel ignores the mouse entirely, and the
 /// pipeline dismisses it (with a fade) as soon as the cursor moves.
@@ -175,6 +176,35 @@ final class OverlayPanel: NSPanel {
             .foregroundColor: NSColor.labelColor,
         ])
         present(speaking: word, language: "en", forceSpeak: forceSpeak, below: cursorGlobal)
+    }
+
+    /// English popup from the Oxford dictionary: one sense per line, the editors' sense
+    /// label dimmed in front of the Chinese — 「(reject) 对…不予考虑」.
+    func show(word: String,
+              senses: [OxfordSense],
+              forceSpeak: Bool = false,
+              below cursorGlobal: CGPoint) {
+        translationLabel.maximumNumberOfLines = 4
+        translationLabel.attributedStringValue = Self.oxfordText(senses)
+        present(speaking: word, language: "en", forceSpeak: forceSpeak, below: cursorGlobal)
+    }
+
+    static func oxfordText(_ senses: [OxfordSense]) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        for (i, sense) in senses.enumerated() {
+            if i > 0 { text.append(NSAttributedString(string: "\n")) }
+            if let label = sense.label {
+                text.append(NSAttributedString(string: label + " ", attributes: [
+                    .font: NSFont.systemFont(ofSize: 12),
+                    .foregroundColor: NSColor.secondaryLabelColor,
+                ]))
+            }
+            text.append(NSAttributedString(string: sense.translation, attributes: [
+                .font: NSFont.systemFont(ofSize: 13),
+                .foregroundColor: NSColor.labelColor,
+            ]))
+        }
+        return text
     }
 
     /// Japanese popup: 「食べる  たべる」 on the first line, Chinese senses below.

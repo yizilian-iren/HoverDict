@@ -36,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }()
 
+    /// macOS's built-in 牛津英汉词典, tried before ECDICT; nil when it isn't installed
+    /// (English then uses ECDICT alone).
+    private let oxfordDictionary = OxfordDictionary()
+
     /// macOS's built-in 日中辞典; nil when it isn't installed (Japanese then stays off).
     private let japaneseDictionary = JapaneseDictionary()
 
@@ -279,14 +283,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             // Look up off the main thread; use OCR neighbors to prefer a matching POS sense.
+            // Oxford first (better definitions); ECDICT for what it doesn't have.
+            let oxfordSenses: [OxfordSense]?
             let entry: DictionaryEntry?
             let preferredPOS: SensePicker.POSKind?
             if let hit {
                 let phrase = CoordinateMapper.contextPhrase(around: hit, in: hits)
                 preferredPOS = SensePicker.lexicalPOS(of: hit.text, in: phrase)
-                entry = self.dictionary?.lookup(hit.text)
+                if OxfordDictionary.prefersECDICT(hit.text),
+                   let acronym = self.dictionary?.lookup(hit.text) {
+                    oxfordSenses = nil
+                    entry = acronym
+                } else {
+                    oxfordSenses = self.oxfordDictionary?.lookup(hit.text, preferredPOS: preferredPOS)
+                    entry = oxfordSenses == nil ? self.dictionary?.lookup(hit.text) : nil
+                }
             } else {
                 preferredPOS = nil
+                oxfordSenses = nil
                 entry = nil
             }
 
@@ -295,7 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // like は), never the English "not found" for OCR noise.
             let onJapanese: Bool
             let japaneseEntry: JapaneseEntry?
-            if entry == nil, let japaneseDictionary,
+            if oxfordSenses == nil, entry == nil, let japaneseDictionary,
                let target = CoordinateMapper.japaneseTarget(
                    in: self.ocr.recognize(in: capture.cgImage, includeJapanese: true).lines,
                    captureRectGlobal: capture.captureRectGlobal,
@@ -319,6 +333,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     } else {
                         self.panel.hidePanel(animated: true)
                     }
+                } else if let hit, let oxfordSenses {
+                    self.panel.show(word: hit.text,
+                                    senses: oxfordSenses,
+                                    forceSpeak: fromClick,
+                                    below: cursorGlobal)
                 } else if let hit {
                     self.panel.show(word: hit.text,
                                     entry: entry,

@@ -17,17 +17,12 @@ struct JapaneseEntry {
 ///     in an OCR'd line — no spaces needed, and 食べました is taken as one term.
 ///   • `DCSCopyRecordsForSearchString` (private) maps that surface form back to its
 ///     entries (食べました → 食べる【たべる】) and gives us structured XHTML to parse.
-/// The private symbols are resolved with `dlsym`, so if a future macOS drops them the
-/// initializer just fails and Japanese take-word is disabled instead of crashing.
+/// Both go through `SystemDictionary`; if the dictionary isn't installed (or the private
+/// API is gone) the initializer fails and Japanese take-word is disabled.
 final class JapaneseDictionary {
 
-    private typealias CreateFn = @convention(c) (CFURL) -> Unmanaged<DCSDictionary>?
-    private typealias CopyRecordsFn = @convention(c) (DCSDictionary, CFString, UnsafeRawPointer?, UnsafeRawPointer?) -> Unmanaged<CFArray>?
-    private typealias CopyRecordDataFn = @convention(c) (CFTypeRef, CFIndex) -> Unmanaged<CFString>?
-
-    private let dictionary: DCSDictionary
-    private let copyRecords: CopyRecordsFn
-    private let copyRecordData: CopyRecordDataFn
+    private let system: SystemDictionary
+    private var dictionary: DCSDictionary { system.dictionary }
     private let queue = DispatchQueue(label: "com.hoverdict.japanese")
 
     /// Senses kept for the popup, and Chinese words kept per sense.
@@ -35,48 +30,10 @@ final class JapaneseDictionary {
     private let maxWordsPerSense = 3
 
     init?() {
-        let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)   // RTLD_DEFAULT
-        guard let createSym = dlsym(rtldDefault, "DCSDictionaryCreate"),
-              let recordsSym = dlsym(rtldDefault, "DCSCopyRecordsForSearchString"),
-              let dataSym = dlsym(rtldDefault, "DCSRecordCopyData") else {
-            NSLog("HoverDict: DictionaryServices private API unavailable — Japanese disabled.")
+        guard let system = SystemDictionary(bundleName: "Simplified Chinese - Japanese.dictionary") else {
             return nil
         }
-        guard let url = Self.locateDictionary() else {
-            NSLog("HoverDict: 日中辞典 not installed — enable “Simplified Chinese - Japanese” in Dictionary.app.")
-            return nil
-        }
-        let create = unsafeBitCast(createSym, to: CreateFn.self)
-        guard let dict = create(url as CFURL)?.takeRetainedValue() else {
-            NSLog("HoverDict: failed to open \(url.path)")
-            return nil
-        }
-        dictionary = dict
-        copyRecords = unsafeBitCast(recordsSym, to: CopyRecordsFn.self)
-        copyRecordData = unsafeBitCast(dataSym, to: CopyRecordDataFn.self)
-    }
-
-    /// Dictionaries downloaded from Dictionary.app live as MobileAssets; the asset folder
-    /// name is a hash and the parent's suffix varies across macOS versions, so search.
-    private static func locateDictionary() -> URL? {
-        let name = "Simplified Chinese - Japanese.dictionary"
-        let fm = FileManager.default
-        let assetsRoot = URL(fileURLWithPath: "/System/Library/AssetsV2")
-        let assetTypes = (try? fm.contentsOfDirectory(atPath: assetsRoot.path)) ?? []
-        for type in assetTypes where type.hasPrefix("com_apple_MobileAsset_DictionaryServices_dictionary") {
-            let typeDir = assetsRoot.appendingPathComponent(type)
-            for asset in (try? fm.contentsOfDirectory(atPath: typeDir.path)) ?? [] {
-                let candidate = typeDir.appendingPathComponent(asset)
-                    .appendingPathComponent("AssetData")
-                    .appendingPathComponent(name)
-                if fm.fileExists(atPath: candidate.path) { return candidate }
-            }
-        }
-        for dir in ["/Library/Dictionaries", NSHomeDirectory() + "/Library/Dictionaries"] {
-            let candidate = URL(fileURLWithPath: dir).appendingPathComponent(name)
-            if fm.fileExists(atPath: candidate.path) { return candidate }
-        }
-        return nil
+        self.system = system
     }
 
     // MARK: - Lookup
@@ -141,13 +98,9 @@ final class JapaneseDictionary {
     /// 下る which merely lists 降る as a spelling), then by any other spelling
     /// (日本語 → the 日本 entry holding 日本語). Ties keep dictionary order.
     private func bestRecordHTML(for surface: String) -> String? {
-        guard let records = copyRecords(dictionary, surface as CFString, nil, nil)?
-            .takeRetainedValue() as? [AnyObject] else { return nil }
-
         var best: (html: String, title: Int, any: Int)?
-        for record in records {
-            guard let html = copyRecordData(record, 0)?.takeRetainedValue() as String?,
-                  html.contains("d:entry id=\"j_") else { continue }
+        for html in system.entriesHTML(for: surface) {
+            guard html.contains("d:entry id=\"j_") else { continue }
             let spellings = Self.spellings(in: html)
             let title = spellings.first.map { Self.commonPrefixLength($0, surface) } ?? 0
             let any = spellings.map { Self.commonPrefixLength($0, surface) }.max() ?? 0
