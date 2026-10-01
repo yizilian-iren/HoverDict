@@ -2,11 +2,16 @@
 
 APP := build/HoverDict.app
 
-.PHONY: build app run clean rebuild
+.PHONY: build test app run stop dmg clean rebuild
 
 # Compile the SwiftPM executable only (fast iteration / type-check).
 build:
 	swift build
+
+# Unit tests for the pure logic (filter rules, hit testing, sense picking). No .app,
+# dictionary or Screen Recording permission needed.
+test:
+	swift test
 
 # Build the signed .app bundle.
 app:

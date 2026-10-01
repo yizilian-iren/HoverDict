@@ -13,6 +13,13 @@ let package = Package(
         .executableTarget(
             name: "HoverDict",
             path: "Sources/HoverDict"
+        ),
+        // Swift Testing (not XCTest): Command Line Tools ship Testing.framework only.
+        // Run with `make test`.
+        .testTarget(
+            name: "HoverDictTests",
+            dependencies: ["HoverDict"],
+            path: "Tests/HoverDictTests"
         )
     ]
 )
