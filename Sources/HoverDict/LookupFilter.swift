@@ -5,14 +5,19 @@ import CoreGraphics
 ///
 /// Skips:
 ///   • numeric tokens (123, 3.14, 50%, $12, 1st, 2024-08-20, 16:9, …)
-///   • AI thinking / tool-call status ("Thinking", "Thought", "Running", …)
 ///   • closed-class / ultra-basic words (the, is, and, of, …)
-///   • UI chrome — isolated short labels like buttons ("Send", "OK", "New Chat")
+///   • AI thinking / tool-call status lines ("Thinking…", "Thought for 5s") — only as a
+///     short isolated label; the same words inside a sentence are looked up
+///   • UI chrome — isolated short labels made of elementary button words ("Send", "OK")
 ///   • CJK tokens on the English path (Chinese / Japanese text — Japanese has its own path)
+///
+/// Everything here errs toward showing the popup: a word the reader may not know must
+/// never be swallowed, so the word lists hold only words nobody needs translated.
 enum LookupFilter {
 
-    /// `fromClick` is stricter: an isolated Title-Case label is treated as a control,
-    /// because the user is usually pressing the button, not asking for a definition.
+    /// `fromClick` is stricter: an isolated ALL-CAPS / Title-Case label is treated as a
+    /// control, because the user is usually pressing the button, not asking for a
+    /// definition. On hover, casing alone never hides a word (headings, table headers).
     static func shouldSkip(_ hit: WordHit, in words: [WordHit], fromClick: Bool) -> Bool {
         let token = normalize(hit.text)
         if token.isEmpty { return true }
@@ -129,6 +134,13 @@ enum LookupFilter {
         // Part of a sentence / paragraph line — look it up.
         if hasNearbyProse { return false }
 
+        // "Thinking…" / "Thought for 5s" / "Searching the web": a short isolated line
+        // that STARTS with a status word. Hovering any word of it is noise.
+        if cluster.count <= 4, let first = cluster.first,
+           statusWords.contains(normalize(first.text).lowercased()) {
+            return true
+        }
+
         guard cluster.count <= 3 else { return false }
         let letterCount = cluster.map(\.text).joined().filter(\.isLetter).count
         guard letterCount <= 22 else { return false }
@@ -136,12 +148,8 @@ enum LookupFilter {
         if cluster.contains(where: { uiLabels.contains(normalize($0.text).lowercased()) }) {
             return true
         }
-        if cluster.allSatisfy({ isAllCapsWord($0.text) }) { return true }
-        // "New Chat" / "Sign Up" — almost always a control.
-        if cluster.count >= 2 && cluster.allSatisfy({ isTitleCaseWord($0.text) || isAllCapsWord($0.text) }) {
-            return true
-        }
-        // Clicking an isolated Title-Case label (Save, Bold, Settings) is a button press.
+        // Clicking an isolated ALL-CAPS / Title-Case label (Bold, New Chat, README) is a
+        // button press. Hovering one is not skipped: it may be a heading.
         if fromClick && cluster.allSatisfy({ isTitleCaseWord($0.text) || isAllCapsWord($0.text) }) {
             return true
         }
@@ -149,9 +157,9 @@ enum LookupFilter {
     }
 
     private static func looksLikeChromeWord(_ raw: String, fromClick: Bool) -> Bool {
-        if uiLabels.contains(normalize(raw).lowercased()) { return true }
-        if isAllCapsWord(raw) { return true }
-        if fromClick && isTitleCaseWord(raw) { return true }
+        let lower = normalize(raw).lowercased()
+        if uiLabels.contains(lower) || statusWords.contains(lower) { return true }
+        if fromClick && (isTitleCaseWord(raw) || isAllCapsWord(raw)) { return true }
         return false
     }
 
@@ -173,16 +181,20 @@ enum LookupFilter {
             .trimmingCharacters(in: .punctuationCharacters)
     }
 
-    /// Always skipped, even inside a sentence: AI status chrome + function words
-    /// and a handful of ultra-basic tokens that are noise for a hover dictionary.
-    private static let alwaysSkip: Set<String> = [
-        // AI thinking / tool-call indicators (Claude, Cursor, ChatGPT, …)
+    /// AI thinking / tool-call indicators (Claude, Cursor, ChatGPT, …). Skipped only when
+    /// one starts a short isolated line — in a sentence "reasoning" is a real word.
+    private static let statusWords: Set<String> = [
         "thinking", "thought", "thoughts",
         "running", "reasoning",
         "generating", "streaming",
         "analyzing", "analysing", "considering",
         "working", "loading", "waiting",
         "researching", "searching",
+    ]
+
+    /// Always skipped, even inside a sentence: function words and a handful of
+    /// ultra-basic tokens that are noise for a hover dictionary.
+    private static let alwaysSkip: Set<String> = [
         // Articles, pronouns
         "a", "an", "the",
         "i", "me", "my", "mine", "myself",
@@ -224,19 +236,15 @@ enum LookupFilter {
     ]
 
     /// Standalone control labels. Only applied to *isolated* clusters, so "send" in
-    /// "please send it" still looks up.
+    /// "please send it" still looks up. Elementary words only: anything a learner might
+    /// want translated (dismiss, discard, snooze, …) stays out, even though it is a
+    /// common button.
     private static let uiLabels: Set<String> = [
         "ok", "okay", "cancel", "save", "delete", "send", "close", "next", "back",
-        "done", "submit", "continue", "confirm", "apply", "open", "new", "edit",
-        "copy", "paste", "cut", "undo", "redo", "search", "settings", "help",
-        "share", "download", "upload", "refresh", "retry", "skip", "later",
-        "yes", "no", "more", "add", "remove", "select", "clear", "reset", "update",
-        "install", "quit", "exit", "start", "stop", "pause", "play", "mute",
-        "login", "logout", "signin", "signout", "signup", "create", "post", "reply",
-        "publish", "discard", "rename", "import", "export", "print", "preview",
-        "finish", "dismiss", "allow", "deny", "accept", "decline", "reject",
-        "ignore", "enable", "disable", "snooze", "minimize", "maximize", "got",
-        "thanks", "home", "profile", "account", "follow", "unfollow", "subscribe",
-        "upgrade", "replace",
+        "done", "open", "new", "edit", "copy", "paste", "cut", "search", "settings",
+        "help", "share", "download", "upload", "skip", "later",
+        "yes", "no", "more", "add", "start", "stop", "play",
+        "login", "logout", "signin", "signout", "signup",
+        "quit", "exit", "print", "got", "thanks", "home",
     ]
 }

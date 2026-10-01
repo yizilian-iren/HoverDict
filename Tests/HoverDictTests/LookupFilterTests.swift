@@ -29,10 +29,35 @@ import Testing
         #expect(!LookupFilter.shouldSkip(words.hit(word), in: words, fromClick: true))
     }
 
-    @Test(arguments: ["the", "for", "is", "Thinking"])
-    func basicAndStatusWordsAreSkippedEvenInProse(_ word: String) {
+    @Test(arguments: ["the", "for", "is"])
+    func basicWordsAreSkippedEvenInProse(_ word: String) {
         let words = prose("Thinking the model is ready for deployment")
         #expect(LookupFilter.shouldSkip(words.hit(word), in: words, fromClick: false))
+    }
+
+    // MARK: - Status lines
+
+    @Test(arguments: ["Thinking", "analyzing", "reasoning", "considering", "streaming"])
+    func statusWordsInsideASentenceAreLookedUp(_ word: String) {
+        let words = prose("Thinking about analyzing the reasoning behind considering streaming responses")
+        #expect(!LookupFilter.shouldSkip(words.hit(word), in: words, fromClick: false))
+        #expect(!LookupFilter.shouldSkip(words.hit(word), in: words, fromClick: true))
+    }
+
+    @Test func isolatedStatusLineIsSkipped() {
+        let alone = line(["Thinking…"])
+        #expect(LookupFilter.shouldSkip(alone[0], in: alone, fromClick: false))
+
+        let withDetail = line(["Searching", "the", "web"])
+        #expect(LookupFilter.shouldSkip(withDetail.hit("Searching"), in: withDetail, fromClick: false))
+        #expect(LookupFilter.shouldSkip(withDetail.hit("web"), in: withDetail, fromClick: false))
+    }
+
+    @Test func shortLineEndingInAStatusWordIsLookedUp() {
+        // Only a line that STARTS with a status word reads as a status indicator.
+        let words = line(["deductive", "reasoning"])
+        #expect(!LookupFilter.shouldSkip(words.hit("reasoning"), in: words, fromClick: false))
+        #expect(!LookupFilter.shouldSkip(words.hit("deductive"), in: words, fromClick: false))
     }
 
     @Test func trailingPunctuationDoesNotHideAWord() {
@@ -81,12 +106,26 @@ import Testing
         #expect(!LookupFilter.shouldSkip(words.hit("revenue"), in: words, fromClick: false))
     }
 
-    @Test func isolatedAllCapsAndTitleCasePairsAreSkipped() {
-        let caps = line(["README"])
-        #expect(LookupFilter.shouldSkip(caps[0], in: caps, fromClick: false))
+    @Test(arguments: ["Dismiss", "Discard", "Snooze", "Decline", "Subscribe", "Preview"])
+    func isolatedButtonWordALearnerMayNotKnowIsLookedUpOnHover(_ label: String) {
+        let words = line([label])
+        #expect(!LookupFilter.shouldSkip(words[0], in: words, fromClick: false))
+    }
 
-        let pair = line(["Project", "Overview"])
-        #expect(LookupFilter.shouldSkip(pair.hit("Overview"), in: pair, fromClick: false))
+    @Test func headingsAndAllCapsAreLookedUpOnHoverButNotOnClick() {
+        let caps = line(["DEPRECATED"])
+        #expect(!LookupFilter.shouldSkip(caps[0], in: caps, fromClick: false))
+        #expect(LookupFilter.shouldSkip(caps[0], in: caps, fromClick: true))
+
+        let heading = line(["Hardened", "Runtime"])
+        #expect(!LookupFilter.shouldSkip(heading.hit("Hardened"), in: heading, fromClick: false))
+        #expect(!LookupFilter.shouldSkip(heading.hit("Runtime"), in: heading, fromClick: false))
+        #expect(LookupFilter.shouldSkip(heading.hit("Hardened"), in: heading, fromClick: true))
+    }
+
+    @Test func elementaryLabelNextToAnotherWordIsStillSkipped() {
+        let words = line(["New", "Chat"])
+        #expect(LookupFilter.shouldSkip(words.hit("Chat"), in: words, fromClick: false))
     }
 
     @Test func isolatedTitleCaseWordDependsOnClick() {
