@@ -1,8 +1,11 @@
 # HoverDict — convenience targets (CLT-only, no full Xcode needed).
 
 APP := build/HoverDict.app
+# Where `make run` / `make install` put the app. Login Items point here, so launching
+# from build/ instead would leave a stale copy that comes back after a reboot.
+INSTALLED_APP := /Applications/HoverDict.app
 
-.PHONY: build test app run stop dmg clean rebuild
+.PHONY: build test app install run stop dmg clean rebuild
 
 # Compile the SwiftPM executable only (fast iteration / type-check).
 build:
@@ -17,11 +20,16 @@ test:
 app:
 	./Scripts/build_app.sh
 
-# Build then launch the .app. IMPORTANT: kill any running instance first — `open` will
-# NOT relaunch an app that's already running (it just activates the stale process), so
-# without this your code changes wouldn't take effect.
-run: app stop
-	open "$(APP)"
+# Build, then replace the installed copy (quits any running instance first).
+install: app stop
+	rm -rf "$(INSTALLED_APP)"
+	ditto "$(APP)" "$(INSTALLED_APP)"
+
+# Build, install, then launch the installed copy. IMPORTANT: kill any running instance
+# first (install does) — `open` will NOT relaunch an app that's already running (it just
+# activates the stale process), so without this your code changes wouldn't take effect.
+run: install
+	open "$(INSTALLED_APP)"
 
 # Quit any running instance.
 stop:
