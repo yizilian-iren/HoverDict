@@ -19,7 +19,14 @@ let package = Package(
         .testTarget(
             name: "HoverDictTests",
             dependencies: ["HoverDict"],
-            path: "Tests/HoverDictTests"
+            path: "Tests/HoverDictTests",
+            // With CLT alone SwiftPM only sometimes passes the Testing macro plugin dir,
+            // and the build then fails with "plugin for module 'TestingMacros' not found".
+            // Naming it explicitly makes `swift test` reliable; harmless under full Xcode.
+            swiftSettings: [
+                .unsafeFlags(["-plugin-path",
+                              "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing"])
+            ]
         )
     ]
 )
