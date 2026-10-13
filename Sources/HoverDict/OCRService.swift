@@ -27,8 +27,9 @@ struct OCRResult {
 final class OCRService {
 
     /// Called on the main thread when a recognition pass hangs and cancelling it didn't
-    /// free it. Vision can wedge for good (seen 2026-10-13: VNRecognizeTextRequest waiting
-    /// on a semaphore for hours), and every later lookup is then dropped behind it.
+    /// free it. Vision can wedge for good (seen 2026-10-13 on macOS 27.0.1: VNRecognizeTextRequest
+    /// waiting on a semaphore that was never signalled, though the Neural Engine had finished
+    /// all its work), and every later lookup is then dropped behind it.
     var onStuck: (() -> Void)?
 
     /// How long a pass may run before it is cancelled. Japanese is longer: its model's
