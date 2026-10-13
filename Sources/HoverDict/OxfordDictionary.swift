@@ -78,6 +78,26 @@ final class OxfordDictionary {
     }
     private var cache: [CacheKey: CachedLookup] = [:]
 
+    /// The expanded view (Shift): every part-of-speech group of the best entry, each
+    /// sense with its label. Not cached — it runs once per Shift press.
+    func detail(_ rawWord: String) -> [OxfordGroup]? {
+        let word = rawWord.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: .punctuationCharacters)
+        guard !word.isEmpty else { return nil }
+        return queue.sync {
+            var entry = Self.candidates(from: system.entriesHTML(for: word).compactMap(Self.parse(html:)),
+                                        for: word).first
+            if entry == nil {
+                let lemma = DictionaryService.lemmatize(word)
+                if lemma.caseInsensitiveCompare(word) != .orderedSame {
+                    entry = Self.candidates(from: system.entriesHTML(for: lemma).compactMap(Self.parse(html:)),
+                                            for: lemma).first
+                }
+            }
+            return entry?.groups
+        }
+    }
+
     private func pickedGroup(for word: String, preferredPOS: SensePicker.POSKind?) -> OxfordGroup? {
         let entries = system.entriesHTML(for: word).compactMap(Self.parse(html:))
         return Self.pick(from: entries, for: word, preferredPOS: preferredPOS)
@@ -101,19 +121,24 @@ final class OxfordDictionary {
     static func pick(from entries: [OxfordEntry],
                      for word: String,
                      preferredPOS: SensePicker.POSKind?) -> OxfordGroup? {
-        func isExact(_ entry: OxfordEntry) -> Bool {
-            entry.headword.caseInsensitiveCompare(word) == .orderedSame
-        }
-        let lemma = DictionaryService.lemmatize(word)
-        let candidates = entries.filter(isExact)
-            + entries.filter { !isExact($0) && isBaseForm($0.headword, of: word, lemma: lemma) }
-
+        let candidates = Self.candidates(from: entries, for: word)
         if let preferredPOS, preferredPOS != .other {
             for entry in candidates {
                 if let group = entry.groups.first(where: { $0.pos == preferredPOS }) { return group }
             }
         }
         return candidates.first?.groups.first
+    }
+
+    /// The entries for `word` itself first, then those it is an inflection of; look-alikes
+    /// dropped.
+    static func candidates(from entries: [OxfordEntry], for word: String) -> [OxfordEntry] {
+        func isExact(_ entry: OxfordEntry) -> Bool {
+            entry.headword.caseInsensitiveCompare(word) == .orderedSame
+        }
+        let lemma = DictionaryService.lemmatize(word)
+        return entries.filter(isExact)
+            + entries.filter { !isExact($0) && isBaseForm($0.headword, of: word, lemma: lemma) }
     }
 
     /// True when `headword` plausibly is what `word` inflects from: the lemma NLTagger

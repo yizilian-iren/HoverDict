@@ -163,4 +163,36 @@ import Testing
         #expect(OverlayPanel.oxfordText(senses) == "把手")
         #expect(OverlayPanel.oxfordText([]) == "")
     }
+    // MARK: - Expanded popup (Shift)
+
+    @Test @MainActor func detailTextListsGroupsLabelsAndECDICT() {
+        let groups = [
+            OxfordGroup(pos: .verb, senses: [
+                OxfordSense(label: "(shine faintly)", translation: "闪烁、发微光"),
+                OxfordSense(label: nil, translation: "隐约出现"),
+            ]),
+            OxfordGroup(pos: .noun, senses: [OxfordSense(label: "[尤指远处的]", translation: "微光")]),
+        ]
+        let text = OverlayPanel.detailText(glossary: "微光（自定义）", groups: groups,
+                                           ecdict: "n. 微光\nvi. 闪烁\n\n[医] 第三行\n第四行").string
+        #expect(text == """
+        词表  微光（自定义）
+        动词
+        (shine faintly) 闪烁、发微光
+        隐约出现
+        名词
+        [尤指远处的] 微光
+        ECDICT
+        n. 微光
+        vi. 闪烁
+        [医] 第三行
+        """)
+    }
+
+    @Test @MainActor func detailTextCapsSensesAndHandlesNothing() {
+        let many = OxfordGroup(pos: .noun, senses: (1...9).map { OxfordSense(label: nil, translation: "义\($0)") })
+        let text = OverlayPanel.detailText(glossary: nil, groups: [many, many], ecdict: nil, maxSenses: 6).string
+        #expect(text.split(separator: "\n").count == 7)      // one header + 6 senses
+        #expect(OverlayPanel.detailText(glossary: nil, groups: nil, ecdict: nil).string == "（未找到释义）")
+    }
 }

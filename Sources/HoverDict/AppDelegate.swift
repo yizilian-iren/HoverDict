@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let capturer = ScreenCapturer()
     private let ocr = OCRService()
     private let panel = OverlayPanel()
+    private let shiftWatcher = ShiftWatcher()
     private var statusBar: StatusBarController?
     private let hotKey = HotKeyManager()
 
@@ -58,6 +59,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Click mode: where the last take-word click happened. Movement within
     /// `clickDismissRadius` of it (hand jitter after clicking) keeps the popup open.
     private var clickAnchor: CGPoint?
+    /// The English popup on screen, so Shift can expand it to the full entry and back.
+    private struct EnglishPopup {
+        let word: String
+        let cursor: CGPoint
+        let glossary: String?
+        let generation: Int
+        let showShort: (_ speak: Bool) -> Void
+        var expanded = false
+    }
+    private var englishPopup: EnglishPopup?
     private let clickDismissRadius: CGFloat = 12
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -125,6 +136,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.dismissPanelForMouseMove(at: point)
         }
         mouseMonitor.start()
+
+        shiftWatcher.isActive = { [weak self] in
+            guard let self, let popup = self.englishPopup else { return false }
+            return self.panel.isVisible && popup.generation == self.lookupGeneration
+        }
+        shiftWatcher.onPress = { [weak self] in
+            self?.toggleDetail()
+        }
 
         // Menu-bar icon: pause/resume, delay presets, settings, quit.
         let bar = StatusBarController()
@@ -356,26 +375,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     } else {
                         self.panel.hidePanel(animated: true)
                     }
-                } else if let hit, let glossaryText {
-                    self.panel.show(word: hit.text,
-                                    text: glossaryText,
-                                    forceSpeak: fromClick,
-                                    below: cursorGlobal)
-                } else if let hit, let oxfordSenses {
-                    self.panel.show(word: hit.text,
-                                    senses: oxfordSenses,
-                                    forceSpeak: fromClick,
-                                    below: cursorGlobal)
                 } else if let hit {
-                    self.panel.show(word: hit.text,
-                                    entry: entry,
-                                    preferredPOS: preferredPOS,
-                                    forceSpeak: fromClick,
-                                    below: cursorGlobal)
+                    // forceSpeak only on this first show; re-showing after Shift stays quiet.
+                    let showShort: (Bool) -> Void
+                    if let glossaryText {
+                        showShort = { speak in
+                            self.panel.show(word: hit.text, text: glossaryText,
+                                            forceSpeak: speak, below: cursorGlobal)
+                        }
+                    } else if let oxfordSenses {
+                        showShort = { speak in
+                            self.panel.show(word: hit.text, senses: oxfordSenses,
+                                            forceSpeak: speak, below: cursorGlobal)
+                        }
+                    } else {
+                        showShort = { speak in
+                            self.panel.show(word: hit.text, entry: entry, preferredPOS: preferredPOS,
+                                            forceSpeak: speak, below: cursorGlobal)
+                        }
+                    }
+                    showShort(fromClick)
+                    self.englishPopup = EnglishPopup(word: hit.text,
+                                                     cursor: cursorGlobal,
+                                                     glossary: glossaryText,
+                                                     generation: generation,
+                                                     showShort: showShort)
+                    self.shiftWatcher.start()
                 } else {
                     // Strict mode: nothing directly under the cursor → hide the panel.
                     self.panel.hidePanel(animated: true)
                 }
+            }
+        }
+    }
+
+    /// Shift on an English popup: swap between the one-liner and the full entry.
+    private func toggleDetail() {
+        guard var popup = englishPopup, popup.generation == lookupGeneration else { return }
+        if popup.expanded {
+            popup.expanded = false
+            englishPopup = popup
+            popup.showShort(false)
+            return
+        }
+        let generation = lookupGeneration
+        let word = popup.word, glossary = popup.glossary, cursor = popup.cursor
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            let groups = self.oxfordDictionary?.detail(word)
+            let ecdict = self.dictionary?.lookup(word)?.translation
+            await MainActor.run {
+                guard generation == self.lookupGeneration, self.panel.isVisible,
+                      self.englishPopup?.generation == generation else { return }
+                self.englishPopup?.expanded = true
+                let text = OverlayPanel.detailText(glossary: glossary, groups: groups, ecdict: ecdict)
+                self.panel.showDetail(word: word, text: text, below: cursor)
             }
         }
     }

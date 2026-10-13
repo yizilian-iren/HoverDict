@@ -215,6 +215,82 @@ final class OverlayPanel: NSPanel {
             .joined(separator: "；")
     }
 
+    /// Expanded English popup (Shift): the glossary line, every Oxford sense with its
+    /// label under its part of speech, and ECDICT's lines — for when the one-liner
+    /// doesn't fit the sentence.
+    func showDetail(word: String,
+                    text: NSAttributedString,
+                    below cursorGlobal: CGPoint) {
+        translationLabel.maximumNumberOfLines = 16
+        translationLabel.attributedStringValue = text
+        present(speaking: word, language: "en", forceSpeak: false, below: cursorGlobal)
+    }
+
+    static func detailText(glossary: String?,
+                           groups: [OxfordGroup]?,
+                           ecdict: String?,
+                           maxSenses: Int = 6) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        func add(_ string: String, dim: Bool = false) {
+            text.append(NSAttributedString(string: string, attributes: [
+                .font: NSFont.systemFont(ofSize: dim ? 12 : 13),
+                .foregroundColor: dim ? NSColor.secondaryLabelColor : NSColor.labelColor,
+            ]))
+        }
+        func newLine() { if text.length > 0 { add("\n") } }
+
+        if let glossary {
+            add("词表  ", dim: true)
+            add(glossary)
+        }
+        var budget = maxSenses
+        var lastPOS: SensePicker.POSKind?
+        for group in groups ?? [] where budget > 0 {
+            // thread: "名词" senses, then the plural "threads" (衣服) — also a noun; one header.
+            if group.pos != lastPOS {
+                newLine()
+                add(posName(group.pos) ?? "释义", dim: true)
+            }
+            lastPOS = group.pos
+            for sense in group.senses.prefix(budget) {
+                newLine()
+                if let label = sense.label { add(label + " ", dim: true) }
+                add(sense.translation)
+            }
+            budget -= min(budget, group.senses.count)
+        }
+        let ecdictLines = (ecdict ?? "")
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .prefix(3)
+        if !ecdictLines.isEmpty {
+            newLine()
+            add("ECDICT", dim: true)
+            for line in ecdictLines {
+                newLine()
+                add(line)
+            }
+        }
+        if text.length == 0 { add("（未找到释义）") }
+        return text
+    }
+
+    private static func posName(_ pos: SensePicker.POSKind) -> String? {
+        switch pos {
+        case .noun: "名词"
+        case .verb: "动词"
+        case .adjective: "形容词"
+        case .adverb: "副词"
+        case .preposition: "介词"
+        case .conjunction: "连词"
+        case .pronoun: "代词"
+        case .determiner: "限定词"
+        case .number: "数词"
+        case .other: nil
+        }
+    }
+
     /// Japanese popup: 「食べる  たべる」 on the first line, Chinese senses below.
     /// Speaks the kana reading (never the kanji, whose reading TTS might guess wrong).
     func showJapanese(_ entry: JapaneseEntry,
