@@ -215,9 +215,9 @@ final class OverlayPanel: NSPanel {
             .joined(separator: "；")
     }
 
-    /// Expanded English popup (Shift): the glossary line, every Oxford sense with its
-    /// label under its part of speech, and ECDICT's lines — for when the one-liner
-    /// doesn't fit the sentence.
+    /// Expanded English popup (Shift): the glossary line and Oxford's senses with their
+    /// labels under each part of speech (ECDICT's lines when Oxford lacks the word) —
+    /// for when the one-liner doesn't fit the sentence.
     func showDetail(word: String,
                     text: NSAttributedString,
                     below cursorGlobal: CGPoint) {
@@ -226,10 +226,14 @@ final class OverlayPanel: NSPanel {
         present(speaking: word, language: "en", forceSpeak: false, below: cursorGlobal)
     }
 
+    /// Oxford, when it has the word, already covers what ECDICT says — ECDICT is shown
+    /// only for words Oxford lacks. With several parts of speech each gets up to `perPOS`
+    /// senses, so a long noun list doesn't push the verb out; a single one gets them all.
     static func detailText(glossary: String?,
                            groups: [OxfordGroup]?,
                            ecdict: String?,
-                           maxSenses: Int = 6) -> NSAttributedString {
+                           perPOS: Int = 3,
+                           maxSenses: Int = 8) -> NSAttributedString {
         let text = NSMutableAttributedString()
         func add(_ string: String, dim: Bool = false) {
             text.append(NSAttributedString(string: string, attributes: [
@@ -243,30 +247,35 @@ final class OverlayPanel: NSPanel {
             add("词表  ", dim: true)
             add(glossary)
         }
-        var budget = maxSenses
-        var lastPOS: SensePicker.POSKind?
-        for group in groups ?? [] where budget > 0 {
-            // thread: "名词" senses, then the plural "threads" (衣服) — also a noun; one header.
-            if group.pos != lastPOS {
-                newLine()
-                add(posName(group.pos) ?? "释义", dim: true)
+
+        // thread: "名词" senses, then the plural "threads" (衣服) — also a noun; one block.
+        var merged: [OxfordGroup] = []
+        for group in groups ?? [] {
+            if let last = merged.last, last.pos == group.pos {
+                merged[merged.count - 1] = OxfordGroup(pos: last.pos, senses: last.senses + group.senses)
+            } else {
+                merged.append(group)
             }
-            lastPOS = group.pos
-            for sense in group.senses.prefix(budget) {
+        }
+        var budget = maxSenses
+        let share = merged.count == 1 ? maxSenses : perPOS
+        for group in merged where budget > 0 {
+            newLine()
+            add(posName(group.pos) ?? "释义", dim: true)
+            for sense in group.senses.prefix(min(share, budget)) {
                 newLine()
                 if let label = sense.label { add(label + " ", dim: true) }
                 add(sense.translation)
+                budget -= 1
             }
-            budget -= min(budget, group.senses.count)
         }
-        let ecdictLines = (ecdict ?? "")
-            .split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .prefix(3)
-        if !ecdictLines.isEmpty {
-            newLine()
-            add("ECDICT", dim: true)
+
+        if merged.isEmpty {
+            let ecdictLines = (ecdict ?? "")
+                .split(whereSeparator: \.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .prefix(3)
             for line in ecdictLines {
                 newLine()
                 add(line)

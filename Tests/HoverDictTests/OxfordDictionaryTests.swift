@@ -165,34 +165,48 @@ import Testing
     }
     // MARK: - Expanded popup (Shift)
 
-    @Test @MainActor func detailTextListsGroupsLabelsAndECDICT() {
+    @Test @MainActor func detailTextListsGroupsWithLabels() {
         let groups = [
-            OxfordGroup(pos: .verb, senses: [
+            OxfordGroup(pos: .noun, senses: [
                 OxfordSense(label: "(shine faintly)", translation: "闪烁、发微光"),
                 OxfordSense(label: nil, translation: "隐约出现"),
             ]),
-            OxfordGroup(pos: .noun, senses: [OxfordSense(label: "[尤指远处的]", translation: "微光")]),
+            OxfordGroup(pos: .noun, senses: [OxfordSense(label: nil, translation: "复数义")]),
+            OxfordGroup(pos: .verb, senses: [OxfordSense(label: "[尤指远处的]", translation: "微光")]),
         ]
         let text = OverlayPanel.detailText(glossary: "微光（自定义）", groups: groups,
-                                           ecdict: "n. 微光\nvi. 闪烁\n\n[医] 第三行\n第四行").string
+                                           ecdict: "n. 微光").string
+        // Same POS in a row → one header; ECDICT left out when Oxford has the word.
         #expect(text == """
         词表  微光（自定义）
-        动词
+        名词
         (shine faintly) 闪烁、发微光
         隐约出现
-        名词
+        复数义
+        动词
         [尤指远处的] 微光
-        ECDICT
-        n. 微光
-        vi. 闪烁
-        [医] 第三行
         """)
     }
 
-    @Test @MainActor func detailTextCapsSensesAndHandlesNothing() {
-        let many = OxfordGroup(pos: .noun, senses: (1...9).map { OxfordSense(label: nil, translation: "义\($0)") })
-        let text = OverlayPanel.detailText(glossary: nil, groups: [many, many], ecdict: nil, maxSenses: 6).string
-        #expect(text.split(separator: "\n").count == 7)      // one header + 6 senses
+    @Test @MainActor func detailTextGivesEachPOSItsShare() {
+        let nouns = OxfordGroup(pos: .noun, senses: (1...9).map { OxfordSense(label: nil, translation: "名\($0)") })
+        let verbs = OxfordGroup(pos: .verb, senses: (1...9).map { OxfordSense(label: nil, translation: "动\($0)") })
+        let adjs = OxfordGroup(pos: .adjective, senses: (1...9).map { OxfordSense(label: nil, translation: "形\($0)") })
+        let lines = OverlayPanel.detailText(glossary: nil, groups: [nouns, verbs, adjs], ecdict: nil).string
+            .split(separator: "\n")
+        #expect(lines == ["名词", "名1", "名2", "名3", "动词", "动1", "动2", "动3", "形容词", "形1", "形2"])
+    }
+
+    @Test @MainActor func detailTextGivesASinglePOSTheWholeBudget() {
+        let verbs = OxfordGroup(pos: .verb, senses: (1...9).map { OxfordSense(label: nil, translation: "动\($0)") })
+        #expect(OverlayPanel.detailText(glossary: nil, groups: [verbs], ecdict: nil).string
+                .split(separator: "\n").count == 9)        // header + 8
+    }
+
+    @Test @MainActor func detailTextFallsBackToECDICT() {
+        #expect(OverlayPanel.detailText(glossary: nil, groups: nil,
+                                        ecdict: "[计] 幂等\n\nadj. 幂等的\n第三行\n第四行").string
+                == "[计] 幂等\nadj. 幂等的\n第三行")
         #expect(OverlayPanel.detailText(glossary: nil, groups: nil, ecdict: nil).string == "（未找到释义）")
     }
 }
