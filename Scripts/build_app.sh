@@ -46,6 +46,7 @@ cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 
 # Bundle the ECDICT dictionary (looked up at runtime via Bundle.main).
+cp "$ROOT/Resources/tech_glossary.txt" "$APP/Contents/Resources/tech_glossary.txt"
 if [[ -f "$ROOT/Resources/ecdict.db" ]]; then
     cp "$ROOT/Resources/ecdict.db" "$APP/Contents/Resources/ecdict.db"
 else

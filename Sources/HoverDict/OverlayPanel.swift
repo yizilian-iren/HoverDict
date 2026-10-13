@@ -185,9 +185,17 @@ final class OverlayPanel: NSPanel {
               senses: [OxfordSense],
               forceSpeak: Bool = false,
               below cursorGlobal: CGPoint) {
+        show(word: word, text: Self.oxfordText(senses), forceSpeak: forceSpeak, below: cursorGlobal)
+    }
+
+    /// English popup with ready-made text: a glossary entry, or Oxford's one line.
+    func show(word: String,
+              text: String,
+              forceSpeak: Bool = false,
+              below cursorGlobal: CGPoint) {
         translationLabel.maximumNumberOfLines = 3      // only a very long line wraps
         translationLabel.attributedStringValue = NSAttributedString(
-            string: Self.oxfordText(senses),
+            string: text,
             attributes: [
                 .font: NSFont.systemFont(ofSize: 13),
                 .foregroundColor: NSColor.labelColor,

@@ -36,6 +36,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }()
 
+    /// Bundled tech glossary (thread → 线程；线), tried before the dictionaries.
+    private let techGlossary: Glossary? = Bundle.main
+        .url(forResource: "tech_glossary", withExtension: "txt")
+        .map { Glossary(contentsOf: $0) }
+
+    /// The user's own `word = 释义` list (menu 自定义释义…); wins over everything.
+    private let userGlossary = UserGlossary()
+
     /// macOS's built-in 牛津英汉词典, tried before ECDICT; nil when it isn't installed
     /// (English then uses ECDICT alone).
     private let oxfordDictionary = OxfordDictionary()
@@ -141,6 +149,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         bar.onOpenSettings = {
             PermissionManager.openScreenRecordingSettings()
+        }
+        bar.onEditGlossary = { [weak self] in
+            guard let self else { return }
+            self.userGlossary.ensureExists()
+            NSWorkspace.shared.open(self.userGlossary.url)
         }
         bar.markDelay(savedDelay)
         bar.setPaused(false)
@@ -283,11 +296,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             // Look up off the main thread; use OCR neighbors to prefer a matching POS sense.
-            // Oxford first (better definitions); ECDICT for what it doesn't have.
+            // The user's glossary, then the tech glossary; then Oxford (better
+            // definitions); ECDICT for what it doesn't have.
+            let glossaryText: String?
             let oxfordSenses: [OxfordSense]?
             let entry: DictionaryEntry?
             let preferredPOS: SensePicker.POSKind?
-            if let hit {
+            if let hit,
+               let text = self.userGlossary.lookup(hit.text) ?? self.techGlossary?.lookup(hit.text) {
+                glossaryText = text
+                preferredPOS = nil
+                oxfordSenses = nil
+                entry = nil
+            } else if let hit {
+                glossaryText = nil
                 let phrase = CoordinateMapper.contextPhrase(around: hit, in: hits)
                 preferredPOS = SensePicker.lexicalPOS(of: hit.text, in: phrase)
                 if OxfordDictionary.prefersECDICT(hit.text),
@@ -299,6 +321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     entry = oxfordSenses == nil ? self.dictionary?.lookup(hit.text) : nil
                 }
             } else {
+                glossaryText = nil
                 preferredPOS = nil
                 oxfordSenses = nil
                 entry = nil
@@ -309,7 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // like は), never the English "not found" for OCR noise.
             let onJapanese: Bool
             let japaneseEntry: JapaneseEntry?
-            if oxfordSenses == nil, entry == nil, let japaneseDictionary,
+            if glossaryText == nil, oxfordSenses == nil, entry == nil, let japaneseDictionary,
                let target = CoordinateMapper.japaneseTarget(
                    in: self.ocr.recognize(in: capture.cgImage, includeJapanese: true).lines,
                    captureRectGlobal: capture.captureRectGlobal,
@@ -333,6 +356,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     } else {
                         self.panel.hidePanel(animated: true)
                     }
+                } else if let hit, let glossaryText {
+                    self.panel.show(word: hit.text,
+                                    text: glossaryText,
+                                    forceSpeak: fromClick,
+                                    below: cursorGlobal)
                 } else if let hit, let oxfordSenses {
                     self.panel.show(word: hit.text,
                                     senses: oxfordSenses,

@@ -19,6 +19,8 @@ final class StatusBarController {
     var onToggleJapanese: (() -> Void)?
     /// User picked "Screen Recording settings…".
     var onOpenSettings: (() -> Void)?
+    /// User picked "自定义释义…".
+    var onEditGlossary: (() -> Void)?
 
     /// Delay presets shown in the submenu.
     static let delayPresets: [(title: String, value: TimeInterval)] = [
@@ -105,6 +107,12 @@ final class StatusBarController {
         soundItem.target = self
         menu.addItem(soundItem)
 
+        let glossary = NSMenuItem(title: "自定义释义…",
+                                  action: #selector(editGlossary),
+                                  keyEquivalent: "")
+        glossary.target = self
+        menu.addItem(glossary)
+
         let settings = NSMenuItem(title: "屏幕录制权限设置…",
                                   action: #selector(openSettings),
                                   keyEquivalent: "")
@@ -178,6 +186,10 @@ final class StatusBarController {
 
     @objc private func openSettings() {
         onOpenSettings?()
+    }
+
+    @objc private func editGlossary() {
+        onEditGlossary?()
     }
 
     @objc private func quit() {
