@@ -143,4 +143,24 @@ import Testing
         #expect(oxford.lookup("idempotent", preferredPOS: nil) == nil)
         #expect(oxford.lookup("", preferredPOS: nil) == nil)
     }
+    // MARK: - Popup text (one short line)
+
+    @Test func popupTextKeepsTheFirstRenderingOfEachSenseOnOneLine() {
+        let senses = [
+            OxfordSense(label: "(shine faintly)", translation: "闪烁、发微光"),
+            OxfordSense(label: nil, translation: "微光"),
+            OxfordSense(label: "Finance (appear)", translation: "隐约出现"),
+        ]
+        #expect(OverlayPanel.oxfordText(senses) == "闪烁；微光；隐约出现")
+    }
+
+    @Test func popupTextDropsRepeatsAndBlanks() {
+        let senses = [
+            OxfordSense(label: "(of door)", translation: "把手"),
+            OxfordSense(label: "(of tool)", translation: "把手、柄"),
+            OxfordSense(label: nil, translation: " "),
+        ]
+        #expect(OverlayPanel.oxfordText(senses) == "把手")
+        #expect(OverlayPanel.oxfordText([]) == "")
+    }
 }
