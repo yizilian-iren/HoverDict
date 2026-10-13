@@ -31,9 +31,11 @@ install: app stop
 run: install
 	open "$(INSTALLED_APP)"
 
-# Quit any running instance.
+# Quit any running instance, and wait (up to 5s) until it has exited: `open` right after
+# killall can fail while the old process is still on its way out.
 stop:
 	-killall HoverDict 2>/dev/null || true
+	@for i in $$(seq 50); do pgrep -x HoverDict >/dev/null || break; sleep 0.1; done
 
 # Build a distributable .dmg (free / self-signed; recipients bypass Gatekeeper once).
 dmg:
