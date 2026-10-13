@@ -137,6 +137,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         mouseMonitor.start()
 
+        // A wedged OCR pass would leave `isProcessing` set and every later lookup dropped:
+        // start afresh instead.
+        ocr.onStuck = {
+            Self.relaunch()
+        }
+
         shiftWatcher.isActive = { [weak self] in
             guard let self, let popup = self.englishPopup else { return false }
             return self.panel.isVisible && popup.generation == self.lookupGeneration
@@ -432,6 +438,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.panel.showDetail(word: word, text: text, below: cursor)
             }
         }
+    }
+
+    /// Quit and open this .app again a moment later (once the hot key is released).
+    private static func relaunch() {
+        let path = Bundle.main.bundlePath
+        guard path.hasSuffix(".app") else {
+            NSLog("HoverDict: not running from an .app; can't relaunch")
+            return
+        }
+        NSLog("HoverDict: relaunching")
+        let opener = Process()
+        opener.executableURL = URL(fileURLWithPath: "/bin/sh")
+        opener.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", path]
+        do {
+            try opener.run()
+        } catch {
+            NSLog("HoverDict: relaunch failed: \(error)")
+            return
+        }
+        NSApp.terminate(nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

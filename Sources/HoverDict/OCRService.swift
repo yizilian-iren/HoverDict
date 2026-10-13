@@ -26,6 +26,18 @@ struct OCRResult {
 /// Runs Vision text recognition on a captured image and returns per-word boxes.
 final class OCRService {
 
+    /// Called on the main thread when a recognition pass hangs and cancelling it didn't
+    /// free it. Vision can wedge for good (seen 2026-10-13: VNRecognizeTextRequest waiting
+    /// on a semaphore for hours), and every later lookup is then dropped behind it.
+    var onStuck: (() -> Void)?
+
+    /// How long a pass may run before it is cancelled. Japanese is longer: its model's
+    /// first load takes ~17 s.
+    private static let englishLimit: TimeInterval = 6
+    private static let japaneseLimit: TimeInterval = 30
+    /// After cancelling, how long to wait for the pass to return before giving up on it.
+    private static let cancelGrace: TimeInterval = 3
+
     /// The ja-JP model takes ~17 s to load the first time a new build runs it (then it is
     /// cached). Run one blank pass at launch so the first real hover isn't stuck on that.
     func warmUpJapanese() {
@@ -44,6 +56,10 @@ final class OCRService {
         request.recognitionLanguages = includeJapanese ? ["ja-JP", "en-US"] : ["en-US"]
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
+        let finished = Flag()
+        defer { finished.set() }
+        watch(request, finished: finished,
+              limit: includeJapanese ? Self.japaneseLimit : Self.englishLimit)
         do {
             try handler.perform([request])
         } catch {
@@ -78,6 +94,22 @@ final class OCRService {
         return OCRResult(words: words, lines: lines)
     }
 
+    /// Cancel `request` if it is still running after `limit`; if it still hasn't returned
+    /// `cancelGrace` later, report it as stuck.
+    private func watch(_ request: VNRequest, finished: Flag, limit: TimeInterval) {
+        nonisolated(unsafe) let request = request
+        DispatchQueue.global().asyncAfter(deadline: .now() + limit) { [weak self] in
+            guard !finished.isSet else { return }
+            NSLog("HoverDict: OCR ran past \(Int(limit)) s; cancelling it")
+            request.cancel()
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.cancelGrace) {
+                guard !finished.isSet else { return }
+                NSLog("HoverDict: OCR still stuck after cancelling")
+                DispatchQueue.main.async { self?.onStuck?() }
+            }
+        }
+    }
+
     /// Split a string into word ranges using the Unicode-aware word enumerator,
     /// so punctuation and whitespace are handled correctly.
     private func wordRanges(in string: String) -> [Range<String.Index>] {
@@ -88,4 +120,13 @@ final class OCRService {
         }
         return ranges
     }
+}
+
+/// A thread-safe one-way switch: has the recognition pass returned yet?
+private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    var isSet: Bool { lock.withLock { value } }
+    func set() { lock.withLock { value = true } }
 }
