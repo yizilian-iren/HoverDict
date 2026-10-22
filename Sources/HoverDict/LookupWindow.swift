@@ -179,19 +179,28 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         guard #available(macOS 26.0, *) else { return "（需要 macOS 26 以上）" }
         let from = Locale.Language(identifier: source.localeID)
         let to = Locale.Language(identifier: target.localeID)
-        let status = await LanguageAvailability().status(from: from, to: to)
-        switch status {
-        case .installed:
-            do {
-                let session = TranslationSession(installedSource: from, target: to)
-                return try await session.translate(text).targetText
-            } catch {
-                return "（翻译失败：\(error.localizedDescription)）"
+        // Inside the .app `status` can say .supported for packs that are installed
+        // (the command line sees .installed), so try first and only explain on failure.
+        do {
+            let session: TranslationSession
+            if #available(macOS 26.4, *) {
+                // Without this the .app (built for macOS 14) gets the "Traditional"
+                // engine, whose packs aren't installed; highFidelity is the on-device AI
+                // engine the system already has.
+                session = TranslationSession(installedSource: from, target: to,
+                                             preferredStrategy: .highFidelity)
+            } else {
+                session = TranslationSession(installedSource: from, target: to)
             }
-        case .supported:
-            return "（没下载\(source.name)→\(target.name)的离线翻译：System Settings → General → Language & Region → Translation Languages）"
-        default:
-            return "（系统翻译不支持\(source.name)→\(target.name)）"
+            return try await session.translate(text).targetText
+        } catch {
+            NSLog("HoverDict: translate \(source.rawValue)→\(target.rawValue) failed: \(error)")
+            switch await LanguageAvailability().status(from: from, to: to) {
+            case .unsupported:
+                return "（系统翻译不支持\(source.name)→\(target.name)）"
+            default:
+                return "（\(source.name)→\(target.name)离线翻译不可用：System Settings → General → Language & Region → Translation Languages 里下载语言包）"
+            }
         }
     }
 
@@ -227,7 +236,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         }
 
         heading("翻译（macOS 离线）")
-        for target in TypedLanguage.allCases where target != state.language {
+        for target in TypedLanguage.displayOrder where target != state.language {
             add(target.name + "  ", color: .secondaryLabelColor)
             switch state.translations[target] {
             case .done(let text) where !text.hasPrefix("（"):
@@ -245,7 +254,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         case .loading: loading()
         case .done(nil): add("（Wikipedia 上没找到这个词条，或连不上网）", color: .secondaryLabelColor)
         case .done(let term?):
-            for language in [TypedLanguage.zh, .ja, .en] {
+            for language in TypedLanguage.displayOrder {
                 add(language.name + "  ", color: .secondaryLabelColor)
                 if let title = term.titles[language] {
                     add(title, size: 15, weight: .medium)

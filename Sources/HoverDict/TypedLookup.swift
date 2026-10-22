@@ -31,6 +31,9 @@ enum TypedLanguage: String, CaseIterable {
         }
     }
 
+    /// Display order in the window: Chinese first for a Chinese reader.
+    static let displayOrder: [TypedLanguage] = [.zh, .ja, .en]
+
     var name: String {
         switch self {
         case .en: "英"
@@ -143,9 +146,21 @@ enum WikiTerms {
         guard let url = apiURL(language, [
             .init(name: "list", value: "search"),
             .init(name: "srsearch", value: term),
-            .init(name: "srlimit", value: "3"),
+            .init(name: "srlimit", value: "10"),
         ]), let data = await get(url) else { return nil }
-        return parseSearch(data).first { $0 != excluding }
+        return parseSearch(data).first { $0 != excluding && sameTerm($0, term) }
+    }
+
+    /// A search hit only counts when it names the typed term itself, give or take a
+    /// "(…)" qualifier: transformer → "Transformer (deep learning)", but not たべる →
+    /// "たべるんごのうた" (a song that merely starts with it).
+    static func sameTerm(_ title: String, _ term: String) -> Bool {
+        var base = title
+        if let open = base.firstIndex(where: { $0 == "(" || $0 == "（" }) {
+            base = String(base[..<open])
+        }
+        return base.trimmingCharacters(in: .whitespaces)
+            .caseInsensitiveCompare(term.trimmingCharacters(in: .whitespaces)) == .orderedSame
     }
 
     /// The first page of a `formatversion=2` query, or nil when it's missing.

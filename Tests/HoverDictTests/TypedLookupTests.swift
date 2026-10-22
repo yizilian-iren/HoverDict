@@ -50,4 +50,11 @@ import Testing
         let simplified = #"{"query":{"pages":[{"title":"線程","varianttitles":{"zh-cn":"线程"}}]}}"#
         #expect(WikiTerms.parsePage(Data(simplified.utf8))?.title == "线程")
     }
+
+    @Test func searchHitMustNameTheTerm() {
+        #expect(WikiTerms.sameTerm("Transformer (deep learning)", "transformer"))
+        #expect(WikiTerms.sameTerm("スレッド (コンピュータ)", "スレッド"))
+        #expect(!WikiTerms.sameTerm("たべるんごのうた", "たべる"))
+        #expect(!WikiTerms.sameTerm("Neural network", "network"))
+    }
 }
