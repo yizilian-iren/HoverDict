@@ -194,6 +194,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bar.onOpenLookup = { [weak self] in
             self?.lookupWindow.toggle()
         }
+        bar.onSetAPIKey = {
+            Self.askForAPIKey()
+        }
         bar.markDelay(savedDelay)
         bar.setPaused(false)
 
@@ -506,6 +509,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Menu Claude API key…: paste the key from console.anthropic.com; it goes to the Keychain.
+    private static func askForAPIKey() {
+        let alert = NSAlert()
+        alert.messageText = "Claude API key"
+        alert.informativeText = APIKeyStore.read() == nil
+            ? "打字查词（⌥⇧D）用它让 Claude 翻译。在 console.anthropic.com → API Keys 新建一个，粘贴到这里；存进 Keychain。"
+            : "已经存了一个 key。粘贴新的会替换它；清空再按 Save 会删掉它。"
+        let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        input.placeholderString = "sk-ant-…"
+        alert.accessoryView = input
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = input
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if !APIKeyStore.save(input.stringValue) {
+            let failed = NSAlert()
+            failed.messageText = "没存进 Keychain"
+            failed.runModal()
+        }
+    }
+
     /// Quit and open this .app again a moment later (once the hot key is released).
     private static func relaunch() {
         let path = Bundle.main.bundlePath
@@ -529,5 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         mouseMonitor.stop()
         hotKey.unregister()
+        lookupHotKey.unregister()
+        ClaudeVoice.shared.shutdown()
     }
 }

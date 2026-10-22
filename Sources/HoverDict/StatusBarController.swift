@@ -23,6 +23,8 @@ final class StatusBarController {
     var onEditGlossary: (() -> Void)?
     /// 打字查词… (also ⌥⇧D anywhere).
     var onOpenLookup: (() -> Void)?
+    /// Claude API key… (for the Claude translation in the lookup window).
+    var onSetAPIKey: (() -> Void)?
 
     /// Delay presets shown in the submenu.
     static let delayPresets: [(title: String, value: TimeInterval)] = [
@@ -122,6 +124,12 @@ final class StatusBarController {
         glossary.target = self
         menu.addItem(glossary)
 
+        let apiKey = NSMenuItem(title: "Claude API key…",
+                                action: #selector(setAPIKey),
+                                keyEquivalent: "")
+        apiKey.target = self
+        menu.addItem(apiKey)
+
         let settings = NSMenuItem(title: "屏幕录制权限设置…",
                                   action: #selector(openSettings),
                                   keyEquivalent: "")
@@ -195,6 +203,10 @@ final class StatusBarController {
 
     @objc private func openSettings() {
         onOpenSettings?()
+    }
+
+    @objc private func setAPIKey() {
+        onSetAPIKey?()
     }
 
     @objc private func openLookup() {

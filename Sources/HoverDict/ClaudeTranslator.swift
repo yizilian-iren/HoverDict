@@ -1,0 +1,161 @@
+import Foundation
+import Security
+
+/// The typed term in 中 / 日 / 英 from Claude, every main sense (technical first), plus a
+/// one-line Chinese note. Uses the Messages API with the user's own key (menu
+/// Claude API key…), kept in the Keychain.
+struct ClaudeTranslation: Equatable {
+    var zh: String
+    var ja: String
+    var en: String
+    var note: String
+
+    func text(for language: TypedLanguage) -> String {
+        switch language {
+        case .zh: zh
+        case .ja: ja
+        case .en: en
+        }
+    }
+}
+
+enum ClaudeTranslator {
+
+    enum Failure: Error, Equatable {
+        case noKey
+        case http(Int, String)
+        case refused
+        case unreadable
+    }
+
+    static let model = "claude-opus-5-5"
+
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 30
+        return URLSession(configuration: config)
+    }()
+
+    static func translate(_ term: String, from language: TypedLanguage) async -> Result<ClaudeTranslation, Failure> {
+        guard let key = APIKeyStore.read() else { return .failure(.noKey) }
+        guard let body = try? JSONSerialization.data(withJSONObject: requestBody(term, from: language)) else {
+            return .failure(.unreadable)
+        }
+        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        // `fallbacks: "default"`: a safety decline is retried on a fallback model in the same call.
+        request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+        request.httpBody = body
+        guard let (data, response) = try? await session.data(for: request),
+              let http = response as? HTTPURLResponse else {
+            return .failure(.http(0, "连不上 api.anthropic.com"))
+        }
+        guard http.statusCode == 200 else {
+            return .failure(.http(http.statusCode, errorMessage(data) ?? ""))
+        }
+        return parse(data)
+    }
+
+    static func requestBody(_ term: String, from language: TypedLanguage) -> [String: Any] {
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "zh": ["type": "string"],
+                "ja": ["type": "string"],
+                "en": ["type": "string"],
+                "note": ["type": "string"],
+            ],
+            "required": ["zh", "ja", "en", "note"],
+            "additionalProperties": false,
+        ]
+        let prompt = """
+        A reader who works in tech looked up this \(language.englishName) term: \(term)
+
+        Give it in Simplified Chinese (zh), Japanese (ja) and English (en). If it has several \
+        common meanings, list the main ones in each language separated by "；", the technical \
+        (computing / science / engineering) meaning first. Use the names people in the field \
+        actually use (e.g. Transformer stays "Transformer" in Chinese and Japanese). \
+        In note, one short sentence in Simplified Chinese saying what it is, technical sense first.
+        """
+        return [
+            "model": model,
+            "max_tokens": 2000,
+            "output_config": [
+                "effort": "low",
+                "format": ["type": "json_schema", "schema": schema],
+            ],
+            "fallbacks": "default",
+            "messages": [["role": "user", "content": prompt]],
+        ]
+    }
+
+    static func parse(_ data: Data) -> Result<ClaudeTranslation, Failure> {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .failure(.unreadable)
+        }
+        if root["stop_reason"] as? String == "refusal" { return .failure(.refused) }
+        let text = (root["content"] as? [[String: Any]] ?? [])
+            .first { $0["type"] as? String == "text" }?["text"] as? String
+        guard let json = text?.data(using: .utf8),
+              let fields = try? JSONSerialization.jsonObject(with: json) as? [String: String],
+              let zh = fields["zh"], let ja = fields["ja"], let en = fields["en"] else {
+            return .failure(.unreadable)
+        }
+        return .success(ClaudeTranslation(zh: zh, ja: ja, en: en, note: fields["note"] ?? ""))
+    }
+
+    private static func errorMessage(_ data: Data) -> String? {
+        let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (root?["error"] as? [String: Any])?["message"] as? String
+    }
+}
+
+private extension TypedLanguage {
+    var englishName: String {
+        switch self {
+        case .zh: "Chinese"
+        case .ja: "Japanese"
+        case .en: "English"
+        }
+    }
+}
+
+/// The Anthropic API key, in the login Keychain (never in UserDefaults or a file).
+enum APIKeyStore {
+    private static let service = "com.hoverdict.anthropic-api-key"
+    private static let account = "default"
+
+    static func read() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data, let key = String(data: data, encoding: .utf8),
+              !key.isEmpty else { return nil }
+        return key
+    }
+
+    /// An empty key removes it.
+    @discardableResult
+    static func save(_ key: String) -> Bool {
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(base as CFDictionary)
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        var add = base
+        add[kSecValueData as String] = Data(trimmed.utf8)
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+}

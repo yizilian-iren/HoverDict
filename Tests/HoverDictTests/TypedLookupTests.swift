@@ -57,4 +57,31 @@ import Testing
         #expect(!WikiTerms.sameTerm("たべるんごのうた", "たべる"))
         #expect(!WikiTerms.sameTerm("Neural network", "network"))
     }
+
+    @Test func readsClaudeTranslation() throws {
+        let reply = #"""
+        {"stop_reason":"end_turn","content":[{"type":"thinking","thinking":""},
+         {"type":"text","text":"{\"zh\":\"变压器；Transformer 模型\",\"ja\":\"変圧器；Transformer\",\"en\":\"transformer\",\"note\":\"一种神经网络架构。\"}"}]}
+        """#
+        let result = ClaudeTranslator.parse(Data(reply.utf8))
+        let translation = try result.get()
+        #expect(translation.zh == "变压器；Transformer 模型")
+        #expect(translation.text(for: .ja) == "変圧器；Transformer")
+        #expect(translation.note == "一种神经网络架构。")
+
+        let refused = #"{"stop_reason":"refusal","content":[]}"#
+        #expect(ClaudeTranslator.parse(Data(refused.utf8)) == .failure(.refused))
+        #expect(ClaudeTranslator.parse(Data("nope".utf8)) == .failure(.unreadable))
+    }
+
+    @Test func claudeRequestAsksForJSON() throws {
+        let body = ClaudeTranslator.requestBody("线程", from: .zh)
+        #expect(body["model"] as? String == "claude-opus-5-5")
+        #expect(body["fallbacks"] as? String == "default")
+        let output = try #require(body["output_config"] as? [String: Any])
+        #expect(output["effort"] as? String == "low")
+        #expect((output["format"] as? [String: Any])?["type"] as? String == "json_schema")
+        let prompt = try #require((body["messages"] as? [[String: Any]])?.first?["content"] as? String)
+        #expect(prompt.contains("线程") && prompt.contains("Chinese term"))
+    }
 }
