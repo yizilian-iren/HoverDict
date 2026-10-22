@@ -161,7 +161,18 @@ enum APIKeyStore {
     private static let service = "com.hoverdict.anthropic-api-key"
     private static let account = "default"
 
+    /// The key is read from the Keychain at most once per launch and then kept in memory,
+    /// so Keychain's "wants to access" prompt can't come back on every lookup. A denied
+    /// read (Deny / Cancel) is remembered too, until the user saves a key from the menu.
+    private static let lock = NSLock()
+    private static var cached: String?
+    private static var loaded = false
+
     static func read() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached { return cached }
+        if loaded { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -170,9 +181,13 @@ enum APIKeyStore {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        // Not found: ask again next time (the user may add a key). Denied: don't.
+        if status != errSecItemNotFound { loaded = true }
+        guard status == errSecSuccess,
               let data = item as? Data, let key = String(data: data, encoding: .utf8),
               !key.isEmpty else { return nil }
+        cached = key
         return key
     }
 
@@ -184,11 +199,18 @@ enum APIKeyStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
+        lock.lock()
+        defer { lock.unlock() }
         SecItemDelete(base as CFDictionary)
+        cached = nil
+        loaded = false
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
         var add = base
         add[kSecValueData as String] = Data(trimmed.utf8)
-        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+        guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { return false }
+        cached = trimmed
+        loaded = true
+        return true
     }
 }

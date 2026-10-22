@@ -12,9 +12,14 @@
 #   1. CODESIGN_IDENTITY, when set — a real cert (path to notarization):
 #        CODESIGN_IDENTITY="Apple Development: you@example.com (TEAMID)" ./Scripts/build_app.sh
 #      List candidates with:  security find-identity -v -p codesigning
-#   2. The local self-signed "HoverDict Dev" cert, when Scripts/create_signing_cert.sh
+#   2. The "Developer ID Application: … (S45Q54S929)" cert in the keychain, found by Team ID
+#      and used by SHA-1 (no name ambiguity). Needed because Keychain's partition list
+#      authorizes an app by Team ID; with a self-signed cert it falls back to the cdhash,
+#      which changes on every reinstall and brings the "wants to access key" prompt back.
+#      TCC (Screen Recording / Accessibility) is then granted only once as well.
+#   3. The local self-signed "HoverDict Dev" cert, when Scripts/create_signing_cert.sh
 #      has created it. Stable across rebuilds, so Screen Recording is granted once.
-#   3. Ad-hoc (codesign -s -). Good enough to run locally, but its identity is the
+#   4. Ad-hoc (codesign -s -). Good enough to run locally, but its identity is the
 #      binary's cdhash: every rebuild changes it and you may have to re-grant
 #      Screen Recording.
 #
@@ -54,12 +59,14 @@ else
 fi
 
 # Code sign.
-# Priority: explicit CODESIGN_IDENTITY env > stable self-signed "HoverDict Dev"
+# Priority: explicit CODESIGN_IDENTITY env > Developer ID (Team S45Q54S929) > stable self-signed "HoverDict Dev"
 #           (created by Scripts/create_signing_cert.sh) > ad-hoc ("-").
 # Using the stable cert keeps the designated requirement constant across rebuilds, so
 # the Screen Recording permission is granted ONCE and survives recompiles.
 if [[ -n "${CODESIGN_IDENTITY:-}" ]]; then
     IDENTITY="$CODESIGN_IDENTITY"
+elif DEVID_SHA1="$(security find-identity -v -p codesigning | awk '/Developer ID Application:.*\(S45Q54S929\)/ {print $2; exit}')" && [[ -n "$DEVID_SHA1" ]]; then
+    IDENTITY="$DEVID_SHA1"
 elif security find-certificate -c "HoverDict Dev" >/dev/null 2>&1; then
     IDENTITY="HoverDict Dev"
 else
