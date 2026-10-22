@@ -21,6 +21,8 @@ final class StatusBarController {
     var onOpenSettings: (() -> Void)?
     /// User picked "自定义释义…".
     var onEditGlossary: (() -> Void)?
+    /// 打字查词… (also ⌥⇧D anywhere).
+    var onOpenLookup: (() -> Void)?
 
     /// Delay presets shown in the submenu.
     static let delayPresets: [(title: String, value: TimeInterval)] = [
@@ -79,6 +81,13 @@ final class StatusBarController {
         toggleItem.keyEquivalentModifierMask = [.option, .shift]
         toggleItem.target = self
         menu.addItem(toggleItem)
+
+        let lookup = NSMenuItem(title: "打字查词（中 / 日 / 英）…",
+                                action: #selector(openLookup),
+                                keyEquivalent: "d")
+        lookup.keyEquivalentModifierMask = [.option, .shift]
+        lookup.target = self
+        menu.addItem(lookup)
 
         // Delay submenu.
         let delayParent = NSMenuItem(title: "取词延迟", action: nil, keyEquivalent: "")
@@ -186,6 +195,10 @@ final class StatusBarController {
 
     @objc private func openSettings() {
         onOpenSettings?()
+    }
+
+    @objc private func openLookup() {
+        onOpenLookup?()
     }
 
     @objc private func editGlossary() {

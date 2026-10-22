@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 
 /// Wires the pipeline together:
 ///   MouseMonitor (cursor still / click) → ScreenCapturer → OCRService → CoordinateMapper
@@ -12,6 +13,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shiftWatcher = ShiftWatcher()
     private var statusBar: StatusBarController?
     private let hotKey = HotKeyManager()
+    /// ⌥⇧D opens the typed-lookup window.
+    private let lookupHotKey = HotKeyManager()
+    private lazy var lookupWindow: LookupWindow = {
+        let window = LookupWindow()
+        window.dictionaryText = { [weak self] query, language in
+            self?.typedDictionaryText(query, language: language)
+        }
+        window.soundEnabled = { [weak self] in self?.panel.soundEnabled ?? true }
+        return window
+    }()
 
     /// Single source of truth for pause state.
     private var isPaused = false
@@ -180,6 +191,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.userGlossary.ensureExists()
             NSWorkspace.shared.open(self.userGlossary.url)
         }
+        bar.onOpenLookup = { [weak self] in
+            self?.lookupWindow.toggle()
+        }
         bar.markDelay(savedDelay)
         bar.setPaused(false)
 
@@ -206,6 +220,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.setPaused(!self.isPaused)
         }
         hotKey.register()
+        lookupHotKey.onTrigger = { [weak self] in
+            self?.lookupWindow.toggle()
+        }
+        lookupHotKey.register(keyCode: UInt32(kVK_ANSI_D), id: 2)
 
         NSLog("HoverDict: running. Hover (or click, if enabled) over English or Japanese text to take a word. (⌥⇧A toggles)")
     }
@@ -437,6 +455,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let text = OverlayPanel.detailText(glossary: glossary, groups: groups, ecdict: ecdict)
                 self.panel.showDetail(word: word, text: text, below: cursor)
             }
+        }
+    }
+
+    /// The 词典 block of the typed-lookup window: for English the glossaries, Oxford and
+    /// ECDICT as in the Shift-expanded popup (glossary first); for Japanese the 日中辞典;
+    /// for Chinese the tech glossary read backwards (线程 → thread). Off the main thread.
+    private func typedDictionaryText(_ query: String, language: TypedLanguage) -> NSAttributedString? {
+        let dim: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let body: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor,
+        ]
+        switch language {
+        case .en:
+            let glossary = userGlossary.lookup(query) ?? techGlossary?.lookup(query)
+            let groups = oxfordDictionary?.detail(query)
+            let ecdict = dictionary?.lookup(query)
+            guard glossary != nil || groups != nil || ecdict?.translation != nil else { return nil }
+            let text = NSMutableAttributedString()
+            if let phonetic = ecdict?.phonetic {
+                text.append(NSAttributedString(string: "/\(phonetic)/\n", attributes: dim))
+            }
+            text.append(OverlayPanel.detailText(glossary: glossary, groups: groups,
+                                                ecdict: ecdict?.translation))
+            return text
+        case .ja:
+            guard let entry = japaneseDictionary?.lookup(line: query, utf16Offset: 0) else { return nil }
+            let text = NSMutableAttributedString(string: entry.headword, attributes: [
+                .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+            ])
+            if let reading = entry.reading {
+                text.append(NSAttributedString(string: "  " + reading, attributes: dim))
+            }
+            for sense in entry.senses {
+                text.append(NSAttributedString(string: "\n" + sense, attributes: body))
+            }
+            return text
+        case .zh:
+            let keys = techGlossary?.reverseLookup(query) ?? []
+            guard !keys.isEmpty else { return nil }
+            let text = NSMutableAttributedString(string: "词表  ", attributes: dim)
+            let lines = keys.prefix(5).map { key in
+                "\(key)（\(techGlossary?.lookup(key) ?? "")）"
+            }
+            text.append(NSAttributedString(string: lines.joined(separator: "\n"), attributes: body))
+            return text
         }
     }
 

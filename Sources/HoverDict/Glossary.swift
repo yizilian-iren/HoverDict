@@ -51,6 +51,29 @@ struct Glossary: Equatable {
         return Self.stems(of: lower).lazy.compactMap { folded[$0] }.first
     }
 
+    /// The other way round, for typed Chinese: 线程 → ["thread"]. A key matches when one
+    /// of its `；`-separated meanings, minus （notes）, is exactly `chinese`.
+    func reverseLookup(_ chinese: String) -> [String] {
+        let target = chinese.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return [] }
+        let hits = exact.merging(folded) { a, _ in a }.compactMap { key, value -> String? in
+            Self.meanings(of: value).contains(target) ? key : nil
+        }
+        return hits.sorted()
+    }
+
+    /// "分叉（复刻代码库）；叉子" → ["分叉", "叉子"].
+    static func meanings(of value: String) -> [String] {
+        value.split(whereSeparator: { $0 == "；" || $0 == ";" }).map { part in
+            var s = String(part)
+            while let open = s.firstIndex(where: { $0 == "（" || $0 == "(" }),
+                  let close = s[open...].firstIndex(where: { $0 == "）" || $0 == ")" }) {
+                s.removeSubrange(open...close)
+            }
+            return s.trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty }
+    }
+
     /// tokens → token, caches → cache, patches → patch, committed → commit,
     /// cached → cache / cach, deploying → deploy, merging → merge.
     static func stems(of word: String) -> [String] {

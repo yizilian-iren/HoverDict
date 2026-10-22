@@ -13,25 +13,34 @@ final class HotKeyManager {
 
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
+    private var hotKeyID: UInt32 = 1
 
-    /// Default = ⌥⇧A. Key codes are virtual keys (kVK_ANSI_A == 0).
+    /// Default = ⌥⇧A. Key codes are virtual keys (kVK_ANSI_A == 0). Each manager needs its
+    /// own `id`: every installed handler sees every hot key, and skips the others' ids.
     func register(keyCode: UInt32 = UInt32(kVK_ANSI_A),
-                  modifiers: UInt32 = UInt32(optionKey | shiftKey)) {
+                  modifiers: UInt32 = UInt32(optionKey | shiftKey),
+                  id: UInt32 = 1) {
+        hotKeyID = id
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                  eventKind: UInt32(kEventHotKeyPressed))
 
         // The Carbon handler must be a capture-less C function pointer; we route back to
         // `self` through the userData pointer.
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, userData -> OSStatus in
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData -> OSStatus in
             guard let userData else { return noErr }
             let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
+            var pressed = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                              EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &pressed)
+            guard pressed.id == manager.hotKeyID else { return OSStatus(eventNotHandledErr) }
             // Carbon delivers on the main runloop already; hop to main to be safe.
             DispatchQueue.main.async { manager.onTrigger?() }
             return noErr
         }, 1, &spec, selfPtr, &eventHandler)
 
-        let id = EventHotKeyID(signature: fourCharCode("HVKY"), id: 1)
+        let id = EventHotKeyID(signature: fourCharCode("HVKY"), id: id)
         let status = RegisterEventHotKey(keyCode, modifiers, id,
                                          GetApplicationEventTarget(), 0, &hotKeyRef)
         if status != noErr {
