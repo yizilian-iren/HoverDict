@@ -374,6 +374,8 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             if !translation.note.isEmpty {
                 out.paragraph(translation.note)
             }
+            out.newline()
+            out.add(translation.model.displayName, size: 11, color: DeckTheme.text3)
         }
         return out.string
     }

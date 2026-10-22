@@ -9,6 +9,8 @@ struct ClaudeTranslation: Equatable {
     var ja: String
     var en: String
     var note: String
+    /// The model that answered, shown on the card.
+    var model: ClaudeModel = ClaudeModel.current
 
     func text(for language: TypedLanguage) -> String {
         switch language {
@@ -17,6 +19,33 @@ struct ClaudeTranslation: Equatable {
         case .en: en
         }
     }
+}
+
+/// The models the Claude translation can use (menu Claude 模型), saved in UserDefaults.
+enum ClaudeModel: String, CaseIterable {
+    case haiku = "claude-haiku-5-5"
+    case sonnet = "claude-sonnet-5-5"
+    case opus = "claude-opus-5-5"
+    case fable = "claude-fable-5-1"
+
+    static let defaultsKey = "HoverDict.claudeModel"
+
+    static var current: ClaudeModel {
+        get { UserDefaults.standard.string(forKey: defaultsKey).flatMap(ClaudeModel.init(rawValue:)) ?? .sonnet }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+
+    var displayName: String {
+        switch self {
+        case .haiku: "Haiku 5.5"
+        case .sonnet: "Sonnet 5.5"
+        case .opus: "Opus 5.5"
+        case .fable: "Fable 5.1"
+        }
+    }
+
+    /// Haiku 5.5 has no server-side fallback for safety declines.
+    var supportsFallback: Bool { self != .haiku }
 }
 
 enum ClaudeTranslator {
@@ -28,17 +57,16 @@ enum ClaudeTranslator {
         case unreadable
     }
 
-    static let model = "claude-opus-5-5"
-
     private static let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 30
         return URLSession(configuration: config)
     }()
 
-    static func translate(_ term: String, from language: TypedLanguage) async -> Result<ClaudeTranslation, Failure> {
+    static func translate(_ term: String, from language: TypedLanguage,
+                          model: ClaudeModel = .current) async -> Result<ClaudeTranslation, Failure> {
         guard let key = APIKeyStore.read() else { return .failure(.noKey) }
-        guard let body = try? JSONSerialization.data(withJSONObject: requestBody(term, from: language)) else {
+        guard let body = try? JSONSerialization.data(withJSONObject: requestBody(term, from: language, model: model)) else {
             return .failure(.unreadable)
         }
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
@@ -47,7 +75,9 @@ enum ClaudeTranslator {
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         // `fallbacks: "default"`: a safety decline is retried on a fallback model in the same call.
-        request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+        if model.supportsFallback {
+            request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+        }
         request.httpBody = body
         guard let (data, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse else {
@@ -56,10 +86,11 @@ enum ClaudeTranslator {
         guard http.statusCode == 200 else {
             return .failure(.http(http.statusCode, errorMessage(data) ?? ""))
         }
-        return parse(data)
+        return parse(data, model: model)
     }
 
-    static func requestBody(_ term: String, from language: TypedLanguage) -> [String: Any] {
+    static func requestBody(_ term: String, from language: TypedLanguage,
+                            model: ClaudeModel = .current) -> [String: Any] {
         let schema: [String: Any] = [
             "type": "object",
             "properties": [
@@ -80,19 +111,21 @@ enum ClaudeTranslator {
         actually use (e.g. Transformer stays "Transformer" in Chinese and Japanese). \
         In note, one short sentence in Simplified Chinese saying what it is, technical sense first.
         """
-        return [
-            "model": model,
+        // None of these models accept `thinking: disabled`; low effort keeps it quick.
+        var body: [String: Any] = [
+            "model": model.rawValue,
             "max_tokens": 2000,
             "output_config": [
                 "effort": "low",
                 "format": ["type": "json_schema", "schema": schema],
             ],
-            "fallbacks": "default",
             "messages": [["role": "user", "content": prompt]],
         ]
+        if model.supportsFallback { body["fallbacks"] = "default" }
+        return body
     }
 
-    static func parse(_ data: Data) -> Result<ClaudeTranslation, Failure> {
+    static func parse(_ data: Data, model: ClaudeModel = .current) -> Result<ClaudeTranslation, Failure> {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .failure(.unreadable)
         }
@@ -104,7 +137,7 @@ enum ClaudeTranslator {
               let zh = fields["zh"], let ja = fields["ja"], let en = fields["en"] else {
             return .failure(.unreadable)
         }
-        return .success(ClaudeTranslation(zh: zh, ja: ja, en: en, note: fields["note"] ?? ""))
+        return .success(ClaudeTranslation(zh: zh, ja: ja, en: en, note: fields["note"] ?? "", model: model))
     }
 
     private static func errorMessage(_ data: Data) -> String? {

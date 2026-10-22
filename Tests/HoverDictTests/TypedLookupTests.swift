@@ -75,7 +75,7 @@ import Testing
     }
 
     @Test func claudeRequestAsksForJSON() throws {
-        let body = ClaudeTranslator.requestBody("线程", from: .zh)
+        let body = ClaudeTranslator.requestBody("线程", from: .zh, model: .opus)
         #expect(body["model"] as? String == "claude-opus-5-5")
         #expect(body["fallbacks"] as? String == "default")
         let output = try #require(body["output_config"] as? [String: Any])
@@ -83,5 +83,13 @@ import Testing
         #expect((output["format"] as? [String: Any])?["type"] as? String == "json_schema")
         let prompt = try #require((body["messages"] as? [[String: Any]])?.first?["content"] as? String)
         #expect(prompt.contains("线程") && prompt.contains("Chinese term"))
+    }
+
+    @Test func claudeModelsAndDefault() {
+        #expect(ClaudeModel.allCases.map(\.rawValue)
+            == ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"])
+        let haiku = ClaudeTranslator.requestBody("x", from: .en, model: .haiku)
+        #expect(haiku["model"] as? String == "claude-haiku-5-5" && haiku["fallbacks"] == nil)
+        #expect(haiku["thinking"] == nil)
     }
 }

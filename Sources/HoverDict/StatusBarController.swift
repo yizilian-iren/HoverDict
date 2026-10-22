@@ -42,6 +42,7 @@ final class StatusBarController {
     private let clickModeItem: NSMenuItem
     private let japaneseItem: NSMenuItem
     private var delayItems: [NSMenuItem] = []
+    private var modelItems: [NSMenuItem] = []
 
     init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -130,6 +131,19 @@ final class StatusBarController {
         apiKey.target = self
         menu.addItem(apiKey)
 
+        let modelParent = NSMenuItem(title: "Claude 模型", action: nil, keyEquivalent: "")
+        let modelMenu = NSMenu()
+        for model in ClaudeModel.allCases {
+            let item = NSMenuItem(title: model.displayName, action: #selector(selectModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = model.rawValue
+            item.state = model == ClaudeModel.current ? .on : .off
+            modelMenu.addItem(item)
+            modelItems.append(item)
+        }
+        modelParent.submenu = modelMenu
+        menu.addItem(modelParent)
+
         let settings = NSMenuItem(title: "屏幕录制权限设置…",
                                   action: #selector(openSettings),
                                   keyEquivalent: "")
@@ -178,6 +192,12 @@ final class StatusBarController {
             let v = (item.representedObject as? TimeInterval) ?? -1
             item.state = (abs(v - value) < 0.0001) ? .on : .off
         }
+    }
+
+    @objc private func selectModel(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let model = ClaudeModel(rawValue: raw) else { return }
+        ClaudeModel.current = model
+        for item in modelItems { item.state = item === sender ? .on : .off }
     }
 
     @objc private func togglePause() {
