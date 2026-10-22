@@ -464,13 +464,16 @@ final class OverlayPanel: NSPanel {
         guard !trimmed.isEmpty else { return }
         // Cut off any system speech still running from the previous word.
         synthesizer.stopSpeaking(at: .immediate)
-        // Prefer the Google TTS clip (cached, or fetched now); fall back to the system
-        // voice when it can't be fetched.
-        TTSPlayer.shared.play(trimmed, language: language) { [weak self] in
-            guard let self else { return }
-            let utterance = AVSpeechUtterance(string: trimmed)
-            utterance.voice = AVSpeechSynthesisVoice(language: language == "ja" ? "ja-JP" : "en-US")
-            self.synthesizer.speak(utterance)
+        TTSPlayer.shared.stop()
+        // Prefer the user's Claude voice; Google's clip (cached, or fetched now) when it
+        // can't be reached, then the system voice when that fails too.
+        ClaudeVoice.shared.play(trimmed, language: language == "ja" ? .ja : .en) { [weak self] in
+            TTSPlayer.shared.play(trimmed, language: language) {
+                guard let self else { return }
+                let utterance = AVSpeechUtterance(string: trimmed)
+                utterance.voice = AVSpeechSynthesisVoice(language: language == "ja" ? "ja-JP" : "en-US")
+                self.synthesizer.speak(utterance)
+            }
         }
     }
 

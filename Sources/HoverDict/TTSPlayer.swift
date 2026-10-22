@@ -77,6 +77,11 @@ final class TTSPlayer {
         }
     }
 
+    func stop() {
+        requestSeq += 1
+        player?.stop()
+    }
+
     /// Play the clip at `url`, but only if `seq` is still the most recent request (the
     /// user hasn't moved on to another word in the meantime).
     private func playClip(at url: URL, ifCurrent seq: Int) {

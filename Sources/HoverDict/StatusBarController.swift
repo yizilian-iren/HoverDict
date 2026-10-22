@@ -21,7 +21,7 @@ final class StatusBarController {
     var onOpenSettings: (() -> Void)?
     /// User picked "自定义释义…".
     var onEditGlossary: (() -> Void)?
-    /// 打字查词… (also ⌥⇧D anywhere).
+    /// 打字查词… (also ⌥Z anywhere).
     var onOpenLookup: (() -> Void)?
     /// Claude API key… (for the Claude translation in the lookup window).
     var onSetAPIKey: (() -> Void)?

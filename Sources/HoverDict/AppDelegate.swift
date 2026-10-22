@@ -13,7 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let shiftWatcher = ShiftWatcher()
     private var statusBar: StatusBarController?
     private let hotKey = HotKeyManager()
-    /// ⌥⇧D opens the typed-lookup window.
+    /// ⌥Z opens the typed-lookup window.
     private let lookupHotKey = HotKeyManager()
     private lazy var lookupWindow: LookupWindow = {
         let window = LookupWindow()
@@ -246,7 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lookupHotKey.onTrigger = { [weak self] in
             self?.lookupWindow.toggle()
         }
-        lookupHotKey.register(keyCode: UInt32(kVK_ANSI_D), id: 2)
+        lookupHotKey.register(keyCode: UInt32(kVK_ANSI_Z), modifiers: UInt32(optionKey), id: 2)
 
         NSLog("HoverDict: running. Hover (or click, if enabled) over English or Japanese text to take a word. (⌥⇧A toggles)")
     }
@@ -534,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "Claude API key"
         alert.informativeText = APIKeyStore.read() == nil
-            ? "打字查词（⌥⇧D）用它让 Claude 翻译。在 console.anthropic.com → API Keys 新建一个，粘贴到这里；存进 Keychain。"
+            ? "打字查词（⌥Z）用它让 Claude 翻译。在 console.anthropic.com → API Keys 新建一个，粘贴到这里；存进 Keychain。"
             : "已经存了一个 key。粘贴新的会替换它；清空再按 Save 会删掉它。"
         let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         input.placeholderString = "sk-ant-…"

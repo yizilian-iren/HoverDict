@@ -2,7 +2,7 @@ import AppKit
 import AVFoundation
 import Translation
 
-/// The typed-lookup window (⌥⇧D): type a word or term in 中 / 日 / 英, press Return, and
+/// The typed-lookup window (⌥Z): type a word or term in 中 / 日 / 英, press Return, and
 /// get cards — the dictionaries HoverDict already has, macOS's offline translation into the
 /// other two languages, Claude's translation with every main sense, and the term's Wikipedia
 /// names in all three with a short introduction. Every name has a speaker that reads it in
@@ -159,7 +159,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
 
     // MARK: - Show / hide
 
-    /// ⌥⇧D: bring the window up with the last query selected (typing replaces it), or put
+    /// ⌥Z: bring the window up with the last query selected (typing replaces it), or put
     /// it away when it's already in front.
     func toggle() {
         if isVisible && isKeyWindow {

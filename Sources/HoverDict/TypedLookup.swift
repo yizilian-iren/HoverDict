@@ -1,7 +1,7 @@
 import Foundation
 import NaturalLanguage
 
-/// What the typed-lookup window (⌥⇧D) works with: which of 中 / 日 / 英 the input is,
+/// What the typed-lookup window (⌥Z) works with: which of 中 / 日 / 英 the input is,
 /// and the Wikipedia titles that give a term's name in all three.
 enum TypedLanguage: String, CaseIterable {
     case en, ja, zh

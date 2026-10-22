@@ -19,6 +19,7 @@ final class ClaudeVoice {
     private var tunnel: Process?
     private var player: AVAudioPlayer?
     private var requestSeq = 0
+    private var inFlightKey: String?
     /// After the voice couldn't be reached, use the fallback straight away for a while
     /// instead of waiting on ssh for every word.
     private var unreachableUntil = Date.distantPast
@@ -36,6 +37,10 @@ final class ClaudeVoice {
 
     /// Speak `text`; `fallback` runs (on the main thread) when the voice can't be had.
     func play(_ text: String, language: TypedLanguage, fallback: @escaping () -> Void) {
+        let flightKey = language.rawValue + ":" + TTSPlayer.key(for: text)
+        // Same word asked again while its clip is still being fetched: let that one finish.
+        if inFlightKey == flightKey { return }
+        inFlightKey = nil
         requestSeq += 1
         let seq = requestSeq
         player?.stop()
@@ -48,9 +53,11 @@ final class ClaudeVoice {
             playClip(file, ifCurrent: seq)
             return
         }
+        inFlightKey = flightKey
         Task {
             let data = await self.fetch(text, language: language)
             await MainActor.run {
+                if self.inFlightKey == flightKey { self.inFlightKey = nil }
                 guard seq == self.requestSeq else { return }
                 guard let data else {
                     self.unreachableUntil = Date().addingTimeInterval(60)
@@ -64,6 +71,7 @@ final class ClaudeVoice {
     }
 
     func stop() {
+        inFlightKey = nil
         requestSeq += 1
         player?.stop()
     }
