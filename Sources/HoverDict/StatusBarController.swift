@@ -87,8 +87,8 @@ final class StatusBarController {
 
         let lookup = NSMenuItem(title: "打字查词（中 / 日 / 英）…",
                                 action: #selector(openLookup),
-                                keyEquivalent: "d")
-        lookup.keyEquivalentModifierMask = [.option, .shift]
+                                keyEquivalent: "z")
+        lookup.keyEquivalentModifierMask = [.option]
         lookup.target = self
         menu.addItem(lookup)
 
