@@ -83,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let clickDismissRadius: CGFloat = 12
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.installEditMenu()
         // Always set up the menu-bar control and the monitor FIRST, unconditionally.
         // This way the app never silently dies on a missing permission, and the user
         // always has a visible icon to pause/quit/open settings. Without permission the
@@ -91,6 +92,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Then nudge for permission if needed — non-blocking, never terminates.
         promptForPermissionIfNeeded()
+    }
+
+    /// A menu-bar-only app has no main menu, so ⌘V/⌘C/⌘X/⌘A/⌘Z never reach text fields.
+    /// Install an Edit menu (invisible while we're .accessory) that routes them down the responder chain.
+    private static func installEditMenu() {
+        let main = NSMenu()
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        NSApp.mainMenu = main
     }
 
     // MARK: - Permission
