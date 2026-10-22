@@ -409,11 +409,10 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     private static func restyled(_ text: NSAttributedString) -> NSAttributedString {
         let out = NSMutableAttributedString(attributedString: text)
         let whole = NSRange(location: 0, length: out.length)
-        out.enumerateAttribute(.foregroundColor, in: whole) { value, range, _ in
-            let color = value as? NSColor
-            let mapped: NSColor = color == .secondaryLabelColor || color == .tertiaryLabelColor
-                ? DeckTheme.text2 : DeckTheme.text
-            out.addAttribute(.foregroundColor, value: mapped, range: range)
+        // The popup marks labels (词表, 名词, phonetics) by a smaller font, not one color.
+        out.enumerateAttribute(.font, in: whole) { value, range, _ in
+            let small = ((value as? NSFont)?.pointSize ?? 13) < 13
+            out.addAttribute(.foregroundColor, value: small ? DeckTheme.text3 : DeckTheme.text, range: range)
         }
         out.enumerateAttribute(.font, in: whole) { value, range, _ in
             guard let font = value as? NSFont else { return }
