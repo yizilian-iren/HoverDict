@@ -551,6 +551,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// UserDefaults key for the times of recent stuck-OCR relaunches (see `RelaunchGuard`).
+    private static let relaunchHistoryKey = "HoverDict.relaunchHistory"
+    private static var shownStuckNotice = false
+
     /// Quit and open this .app again a moment later (once the hot key is released).
     private static func relaunch() {
         let path = Bundle.main.bundlePath
@@ -558,6 +562,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("HoverDict: not running from an .app; can't relaunch")
             return
         }
+        let defaults = UserDefaults.standard
+        let history = (defaults.array(forKey: relaunchHistoryKey) as? [Double] ?? [])
+            .map(Date.init(timeIntervalSince1970:))
+        guard let updated = RelaunchGuard.allow(history: history, now: Date()) else {
+            NSLog("HoverDict: OCR stuck again right after relaunching; not relaunching")
+            showStuckNotice()
+            return
+        }
+        defaults.set(updated.map(\.timeIntervalSince1970), forKey: relaunchHistoryKey)
         NSLog("HoverDict: relaunching")
         let opener = Process()
         opener.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -569,6 +582,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSApp.terminate(nil)
+    }
+
+    private static func showStuckNotice() {
+        guard !shownStuckNotice else { return }
+        shownStuckNotice = true
+        let alert = NSAlert()
+        alert.messageText = "HoverDict 的 OCR 卡住了"
+        alert.informativeText = """
+        自动重启了 \(RelaunchGuard.maxRelaunches) 次也没好,取词先停了。
+        请从菜单栏退出 HoverDict 再打开;还是不行就重启一下 Mac。
+        """
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

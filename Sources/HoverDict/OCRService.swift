@@ -38,6 +38,13 @@ final class OCRService {
     private static let japaneseLimit: TimeInterval = 30
     /// After cancelling, how long to wait for the pass to return before giving up on it.
     private static let cancelGrace: TimeInterval = 3
+    /// Limit for a process's first pass of each kind. The Neural Engine keeps its compiled
+    /// models per signing identity, so after a new signature (2026-10-23: Developer ID)
+    /// both models are compiled from scratch, which takes tens of seconds. Relaunching
+    /// before that finished threw the compile away and looped every ~20 s.
+    private static let firstLoadLimit: TimeInterval = 180
+
+    private let models = ModelState()
 
     /// The ja-JP model takes ~17 s to load the first time a new build runs it (then it is
     /// cached). Run one blank pass at launch so the first real hover isn't stuck on that.
@@ -58,9 +65,14 @@ final class OCRService {
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         let finished = Flag()
-        defer { finished.set() }
-        watch(request, finished: finished,
-              limit: includeJapanese ? Self.japaneseLimit : Self.englishLimit)
+        let isFirstLoad = models.beginPass(japanese: includeJapanese)
+        defer {
+            finished.set()
+            if isFirstLoad { models.endFirstLoad(japanese: includeJapanese) }
+        }
+        let limit = isFirstLoad ? Self.firstLoadLimit
+                                : (includeJapanese ? Self.japaneseLimit : Self.englishLimit)
+        watch(request, finished: finished, limit: limit, isFirstLoad: isFirstLoad)
         do {
             try handler.perform([request])
         } catch {
@@ -96,17 +108,22 @@ final class OCRService {
     }
 
     /// Cancel `request` if it is still running after `limit`; if it still hasn't returned
-    /// `cancelGrace` later, report it as stuck.
-    private func watch(_ request: VNRequest, finished: Flag, limit: TimeInterval) {
+    /// `cancelGrace` later, report it as stuck. A pass waiting behind a model's first load
+    /// isn't stuck (Vision runs them one at a time): its clock restarts until the load is done.
+    private func watch(_ request: VNRequest, finished: Flag, limit: TimeInterval, isFirstLoad: Bool) {
         nonisolated(unsafe) let request = request
         DispatchQueue.global().asyncAfter(deadline: .now() + limit) { [weak self] in
-            guard !finished.isSet else { return }
+            guard let self, !finished.isSet else { return }
+            if !isFirstLoad && self.models.isLoading {
+                self.watch(request, finished: finished, limit: limit, isFirstLoad: false)
+                return
+            }
             NSLog("HoverDict: OCR ran past \(Int(limit)) s; cancelling it")
             request.cancel()
             DispatchQueue.global().asyncAfter(deadline: .now() + Self.cancelGrace) {
                 guard !finished.isSet else { return }
                 NSLog("HoverDict: OCR still stuck after cancelling")
-                DispatchQueue.main.async { self?.onStuck?() }
+                DispatchQueue.main.async { self.onStuck?() }
             }
         }
     }
@@ -120,6 +137,32 @@ final class OCRService {
             ranges.append(range)
         }
         return ranges
+    }
+}
+
+/// Which kinds of pass (English only / with Japanese) have finished once in this process,
+/// and how many first passes are still loading their model.
+private final class ModelState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ready: Set<Bool> = []
+    private var loading = 0
+
+    var isLoading: Bool { lock.withLock { loading > 0 } }
+
+    /// True when this is the first pass of its kind still to finish (it loads the model).
+    func beginPass(japanese: Bool) -> Bool {
+        lock.withLock {
+            guard !ready.contains(japanese) else { return false }
+            loading += 1
+            return true
+        }
+    }
+
+    func endFirstLoad(japanese: Bool) {
+        lock.withLock {
+            ready.insert(japanese)
+            loading -= 1
+        }
     }
 }
 
