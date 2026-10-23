@@ -149,7 +149,11 @@ enum ClaudeTranslator {
         timing.outputTokens = stream.outputTokens
         if let message = stream.error { return finish(.failure(.http(0, message))) }
         guard stream.finished else { return finish(.failure(.http(0, "连接中断"))) }
-        return finish(parse(text: stream.text, stopReason: stream.stopReason, model: model))
+        let result = parse(text: stream.text, stopReason: stream.stopReason, model: model)
+        if case .failure(.unreadable) = result {
+            NSLog("HoverDict: Claude answer not readable as JSON (stop \(stream.stopReason ?? "nil")): \(stream.text.prefix(300))")
+        }
+        return finish(result)
     }
 
     /// ⌥Z opened the window: get the connection to the API (DNS, TCP, TLS) ready while the
@@ -186,10 +190,12 @@ enum ClaudeTranslator {
     private static let preconnectLock = NSLock()
     private static var lastPreconnect: TimeInterval = -.infinity
 
-    /// `fallback` / `schema` default to what the app sends; the bench (I-32) turns them off.
+    /// `fallback` / `schema` default to what the app sends: no json_schema, the JSON asked for in
+    /// the prompt (I-33: the schema cost ~1 s before the first word, 3 s when not cached). The
+    /// bench (I-32) can turn either on or off.
     static func requestBody(_ term: String, from language: TypedLanguage,
                             model: ClaudeModel = .current, fast: Bool = false,
-                            fallback: Bool? = nil, schema useSchema: Bool = true) -> [String: Any] {
+                            fallback: Bool? = nil, schema useSchema: Bool = false) -> [String: Any] {
         // The reading first: it's short, so it is on the card with the first sense.
         let schema: [String: Any] = [
             "type": "object",
@@ -217,8 +223,8 @@ enum ClaudeTranslator {
         In note, one short sentence in Simplified Chinese saying what it is, technical sense first.
         """ + (useSchema ? "" : """
 
-        Answer with only a JSON object with the string fields reading, zh, ja, en and note, \
-        in that order, and nothing else.
+        Answer with only one JSON object with the string fields reading, zh, ja, en and note, \
+        in that order: no code block, no other text.
         """)
         // Low effort keeps it quick; 快速模式 also turns thinking down where the model allows.
         var outputConfig: [String: Any] = ["effort": "low"]
@@ -245,15 +251,17 @@ enum ClaudeTranslator {
         return parse(text: text, stopReason: root["stop_reason"] as? String, model: model)
     }
 
-    /// The answer's text (the JSON the schema asks for) and why it stopped.
+    /// The answer's text (the JSON the prompt asks for) and why it stopped. Without a schema
+    /// (I-33) the model may wrap it in a code block or add a line: the first whole object counts.
     static func parse(text: String, stopReason: String?, model: ClaudeModel = .current) -> Result<ClaudeTranslation, Failure> {
         if stopReason == "refusal" { return .failure(.refused) }
-        guard let fields = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String],
-              let zh = fields["zh"], let ja = fields["ja"], let en = fields["en"] else {
+        guard let object = PartialJSON.firstObject(text),
+              let fields = try? JSONSerialization.jsonObject(with: Data(object.utf8)) as? [String: Any],
+              let zh = fields["zh"] as? String, let ja = fields["ja"] as? String, let en = fields["en"] as? String else {
             return .failure(.unreadable)
         }
-        return .success(ClaudeTranslation(zh: zh, ja: ja, en: en, note: fields["note"] ?? "",
-                                          reading: fields["reading"] ?? "", model: model))
+        return .success(ClaudeTranslation(zh: zh, ja: ja, en: en, note: fields["note"] as? String ?? "",
+                                          reading: fields["reading"] as? String ?? "", model: model))
     }
 
     private static func errorMessage(_ data: Data) -> String? {

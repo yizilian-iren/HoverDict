@@ -14,9 +14,9 @@ enum ClaudeBench {
     }
 
     static let variants = [
-        Variant(name: "A", label: "现在的做法 (fallbacks + json_schema)", fallback: true, schema: true),
+        Variant(name: "A", label: "I-33 前的做法 (fallbacks + json_schema)", fallback: true, schema: true),
         Variant(name: "B", label: "去掉 fallbacks", fallback: false, schema: true),
-        Variant(name: "C", label: "去掉 json_schema", fallback: true, schema: false),
+        Variant(name: "C", label: "去掉 json_schema（I-33 起的做法）", fallback: true, schema: false),
         Variant(name: "D", label: "两个都去掉", fallback: false, schema: false),
     ]
     static let words: [(String, TypedLanguage)] = [("lora", .en), ("表示", .zh), ("うどん", .ja), ("人工智能", .zh)]
@@ -122,7 +122,7 @@ enum ClaudeBench {
             row.servedModel = stream.servedModel
             if row.status != 200 {
                 row.note = String(errorText.prefix(160))
-            } else if !variant.schema, case .failure = ClaudeTranslator.parse(text: stream.text, stopReason: stream.stopReason) {
+            } else if case .failure = ClaudeTranslator.parse(text: stream.text, stopReason: stream.stopReason) {
                 row.note = "JSON 读不出"
             } else if stream.stopReason == "refusal" {
                 row.note = "refusal"

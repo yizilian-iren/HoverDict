@@ -84,11 +84,39 @@ struct ClaudeStream {
 /// The string fields of a JSON object that is still being written ("{\"zh\":\"变压器；Tra").
 enum PartialJSON {
 
-    /// Fields whose string is closed, and the one still open (its text so far).
+    /// The first whole `{…}` in the text (skipping a ```json fence or a line before it), nil
+    /// while it is not closed yet.
+    static func firstObject(_ text: String) -> String? {
+        guard let start = text.firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var index = start
+        while index < text.endIndex {
+            let c = text[index]
+            if inString {
+                if escaped { escaped = false }
+                else if c == "\\" { escaped = true }
+                else if c == "\"" { inString = false }
+            } else if c == "\"" {
+                inString = true
+            } else if c == "{" {
+                depth += 1
+            } else if c == "}" {
+                depth -= 1
+                if depth == 0 { return String(text[start...index]) }
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    /// Fields whose string is closed, and the one still open (its text so far). Anything before
+    /// the first "{" (a code fence) is skipped.
     static func fields(_ text: String) -> (closed: [String: String], open: (key: String, value: String)?) {
-        var scanner = Scanner(Array(text.unicodeScalars))
+        guard let start = text.firstIndex(of: "{") else { return ([:], nil) }
+        var scanner = Scanner(Array(text[start...].unicodeScalars))
         var closed: [String: String] = [:]
-        scanner.skipSpace()
         guard scanner.take("{") else { return ([:], nil) }
         while true {
             scanner.skipSpace()

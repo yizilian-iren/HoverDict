@@ -138,4 +138,30 @@ private extension JSONDecoder {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }
+
+    /// Without a schema (I-33) the answer may come fenced or with a line around it.
+    @Test func parseToleratesFencesAndExtraText() throws {
+        let object = #"{"reading":"/ˈloʊrə/","zh":"LoRA；低秩适配","ja":"LoRA","en":"LoRA","note":"微调方法 {见论文}"}"#
+        for text in [object, "```json\n\(object)\n```", "Here it is:\n\(object)\nHope this helps.", "  \(object)  "] {
+            let translation = try ClaudeTranslator.parse(text: text, stopReason: "end_turn").get()
+            #expect(translation.zh == "LoRA；低秩适配" && translation.note == "微调方法 {见论文}"
+                    && translation.reading == "/ˈloʊrə/")
+        }
+        // A quote and braces inside a string don't end the object early.
+        let escaped = #"{"zh":"a\"}b","ja":"c","en":"d"} trailing {"zh":"no"}"#
+        #expect(try ClaudeTranslator.parse(text: escaped, stopReason: "end_turn").get().zh == "a\"}b")
+        // reading / note missing: still an answer; zh / ja / en missing or not strings: not.
+        #expect(try ClaudeTranslator.parse(text: #"{"zh":"a","ja":"b","en":"c"}"#, stopReason: "end_turn").get().note == "")
+        #expect(ClaudeTranslator.parse(text: #"{"zh":"a","ja":"b"}"#, stopReason: "end_turn") == .failure(.unreadable))
+        #expect(ClaudeTranslator.parse(text: #"{"zh":"a","ja":"b","en":3}"#, stopReason: "end_turn") == .failure(.unreadable))
+        #expect(ClaudeTranslator.parse(text: "```json\n{\"zh\":\"a\"", stopReason: "max_tokens") == .failure(.unreadable))
+        #expect(ClaudeTranslator.parse(text: "抱歉，我不能。", stopReason: "end_turn") == .failure(.unreadable))
+    }
+
+    /// While streaming, a fence before the object doesn't stop the senses from showing.
+    @Test func partialJSONSkipsAFence() {
+        let partial = PartialJSON.translation("```json\n{\"reading\":\"x\",\"zh\":\"线程；执行", model: .sonnet)
+        #expect(partial?.zh == "线程" && partial?.reading == "x")
+        #expect(PartialJSON.firstObject("```json\n{\"zh\":\"a") == nil)
+    }
 }

@@ -66,12 +66,11 @@ import Testing
         #expect(body["fallbacks"] as? String == "default")
         let output = try #require(body["output_config"] as? [String: Any])
         #expect(output["effort"] as? String == "low")
-        #expect((output["format"] as? [String: Any])?["type"] as? String == "json_schema")
+        // No json_schema (I-33): the prompt asks for the JSON, the reading first (I-31).
+        #expect(output["format"] == nil)
         let prompt = try #require((body["messages"] as? [[String: Any]])?.first?["content"] as? String)
         #expect(prompt.contains("线程") && prompt.contains("Chinese term"))
-        // The reading comes first (I-31), and the prompt asks for the term's own reading.
-        let schema = try #require((output["format"] as? [String: Any])?["schema"] as? [String: Any])
-        #expect((schema["required"] as? [String])?.first == "reading")
+        #expect(prompt.contains("only one JSON object") && prompt.contains("reading, zh, ja, en and note"))
         #expect(prompt.contains("In reading") && prompt.contains("pinyin"))
     }
 
@@ -97,18 +96,20 @@ import Testing
         #expect(haiku["thinking"] == nil)
     }
 
-    /// The bench's variants (I-32): without fallbacks / without the schema, the rest the same.
-    @Test func benchVariantsDropOnlyTheirPart() {
-        let app = ClaudeTranslator.requestBody("x", from: .en, model: .sonnet, fast: true)
-        #expect(app["fallbacks"] as? String == "default")
-        #expect((app["output_config"] as? [String: Any])?["format"] != nil)
-        let bare = ClaudeTranslator.requestBody("x", from: .en, model: .sonnet, fast: true, fallback: false, schema: false)
+    /// The bench's variants (I-32): with the schema / without fallbacks, the rest the same.
+    @Test func benchVariantsChangeOnlyTheirPart() {
+        let schema = ClaudeTranslator.requestBody("x", from: .en, model: .sonnet, fast: true, schema: true)
+        #expect(schema["fallbacks"] as? String == "default")
+        let format = (schema["output_config"] as? [String: Any])?["format"] as? [String: Any]
+        #expect(format?["type"] as? String == "json_schema")
+        #expect(((format?["schema"] as? [String: Any])?["required"] as? [String])?.first == "reading")
+        let schemaPrompt = ((schema["messages"] as? [[String: Any]])?.first?["content"] as? String) ?? ""
+        #expect(!schemaPrompt.contains("JSON object"))
+        let bare = ClaudeTranslator.requestBody("x", from: .en, model: .sonnet, fast: true, fallback: false)
         #expect(bare["fallbacks"] == nil)
         let config = bare["output_config"] as? [String: Any]
         #expect(config?["format"] == nil && config?["effort"] as? String == "low")
         #expect(bare["thinking"] != nil)
-        let prompt = ((bare["messages"] as? [[String: Any]])?.first?["content"] as? String) ?? ""
-        #expect(prompt.contains("only a JSON object"))
         #expect(ClaudeBench.median([3, 1, 2, 10]) == 2.5 && ClaudeBench.median([]) == nil)
     }
 }
