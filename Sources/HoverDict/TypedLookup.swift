@@ -56,6 +56,33 @@ enum TypedLanguage: String, CaseIterable {
     }
 }
 
+/// One sense of Claude's answer, for its own line on the card: the name, and the
+/// explanation it had in brackets ("LoRA（低秩适配）" → "LoRA", "低秩适配").
+struct Sense: Equatable {
+    var word: String
+    var gloss: String?
+
+    /// Claude joins the senses with "；" (sometimes ";").
+    static func split(_ text: String) -> [Sense] {
+        text.split(whereSeparator: { $0 == "；" || $0 == ";" })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .map(parse)
+    }
+
+    /// A trailing bracket is the gloss; a bracket in the middle is part of the name.
+    private static func parse(_ sense: String) -> Sense {
+        guard let close = sense.last, close == "）" || close == ")",
+              let open = sense.lastIndex(where: { $0 == "（" || $0 == "(" }),
+              open != sense.startIndex else { return Sense(word: sense, gloss: nil) }
+        let word = sense[..<open].trimmingCharacters(in: .whitespaces)
+        let gloss = sense[sense.index(after: open)..<sense.index(before: sense.endIndex)]
+            .trimmingCharacters(in: .whitespaces)
+        guard !word.isEmpty, !gloss.isEmpty else { return Sense(word: sense, gloss: nil) }
+        return Sense(word: word, gloss: gloss)
+    }
+}
+
 /// A Wikipedia article found for the typed term: its title in each language that has
 /// one, and the start of its introduction (Chinese when there is a Chinese article).
 struct WikiTerm: Equatable {

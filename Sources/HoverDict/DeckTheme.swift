@@ -31,10 +31,14 @@ enum DeckTheme {
     /// Accent: the user's Deck accent is mauve (Latte / Mocha). Only for small touches.
     static let accent = dynamic(light: 0x8839EF, dark: 0xCBA6F7)
 
-    /// `--sheet-bg` in Glass: base at 78 % over the frosted window.
-    static let sheetBackground = NSColor(name: nil) { appearance in
+    /// `--glass-bg`: Deck's base over macOS's frosted material (Full screen, as in the
+    /// user's Deck). Deck's window tints it 70 %, but its floating sheets then sit on that
+    /// window; over the desktop 70 % hid what's behind (I-26: 「没有毛玻璃效果」), so a lighter
+    /// tint: blurred colors behind show through, text stays readable on light and dark.
+    static let glassBackground = NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return hex(isDark ? 0x262624 : 0xFAF9F5, alpha: 0.78)
+        // Light glass over dark windows goes grey sooner, so it takes a little more.
+        return hex(isDark ? 0x262624 : 0xFAF9F5, alpha: isDark ? 0.4 : 0.55)
     }
 
     /// `--fill`: text at 5 %, the light fill that sets a card off the sheet.
@@ -42,6 +46,9 @@ enum DeckTheme {
         let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         return hex(isDark ? 0xE8E3D6 : 0x3D3A33, alpha: isDark ? 0.055 : 0.05)
     }
+
+    /// Deck's type: body 13.5 px, labels and meta 12 / 11 px.
+    static let bodySize: CGFloat = 13.5
 
     /// Deck's sizes: sheets 14 px, cards inside them 10 px, gaps 8 px.
     static let sheetRadius: CGFloat = 14

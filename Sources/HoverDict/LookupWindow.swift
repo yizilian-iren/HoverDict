@@ -8,9 +8,10 @@ import Translation
 /// names in all three with a short introduction. Every name has a speaker that reads it in
 /// the user's Claude voice.
 ///
-/// Looks like Agent Deck's Finder (N-006): a borderless sheet of frosted glass with Deck's
-/// Warm tint, 14 px corners, the input bare on top, results as 10 px cards 8 px apart — no
-/// title bar, separator lines or colored edges.
+/// Looks like Agent Deck (N-006, I-26): a borderless sheet of frosted glass with Deck's Warm
+/// tint, 14 px corners, the input bare on top, results as 10 px cards 8 px apart and 8 px in
+/// from the edge — no title bar, separator lines or colored edges. Names in the text color,
+/// labels and explanations in Deck's dimmer ones, nothing bold.
 final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
 
     /// The dictionary block for a query (call off the main thread); nil = nothing found.
@@ -19,7 +20,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     var soundEnabled: () -> Bool = { true }
 
     private let width: CGFloat = 560
-    private let inputHeight: CGFloat = 54
+    private let inputHeight: CGFloat = 48
     private let maxHeight: CGFloat = 620
 
     private let field = NSTextField()
@@ -30,6 +31,8 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     /// Bumped per query, so a slow answer for an earlier one is dropped.
     private var generation = 0
     private var state: State?
+    /// The demo stays up when another app takes focus, so it can be screenshotted.
+    private var isDemo = false
 
     private enum Pending<T> {
         case loading
@@ -67,32 +70,33 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     override var canBecomeMain: Bool { true }
 
     private func buildContent() {
-        // Deck's Glass: macOS's frosted material with the sheet tint over it.
+        // Deck's Glass: macOS's frosted material (the user's Deck uses Full screen) with
+        // Deck's Warm base over it. The corners are a mask image, not a layer mask: a
+        // masked layer stops the material from sampling what's behind the window.
         let glass = NSVisualEffectView()
         glass.material = .fullScreenUI
         glass.blendingMode = .behindWindow
+        // Stays glass when HoverDict isn't the front app (Deck's "glass always").
         glass.state = .active
-        glass.wantsLayer = true
-        glass.layer?.cornerRadius = DeckTheme.sheetRadius
-        glass.layer?.cornerCurve = .continuous
-        glass.layer?.masksToBounds = true
+        glass.maskImage = Self.roundedMask(radius: DeckTheme.sheetRadius)
 
-        let tint = TintView(color: DeckTheme.sheetBackground)
+        let tint = TintView(color: DeckTheme.glassBackground, radius: DeckTheme.sheetRadius)
         tint.translatesAutoresizingMaskIntoConstraints = false
         glass.addSubview(tint)
 
-        let icon = NSImageView(image: Self.symbol("magnifyingglass", size: 15, weight: .medium))
+        let icon = NSImageView(image: Self.symbol("magnifyingglass", size: 14, weight: .regular))
         icon.contentTintColor = DeckTheme.text3
         icon.translatesAutoresizingMaskIntoConstraints = false
 
+        let inputFont = NSFont.systemFont(ofSize: 16)
         field.isBordered = false
         field.drawsBackground = false
         field.focusRingType = .none
-        field.font = .systemFont(ofSize: 18)
+        field.font = inputFont
         field.textColor = DeckTheme.text
         field.placeholderAttributedString = NSAttributedString(
             string: "中文、日本語、English",
-            attributes: [.font: NSFont.systemFont(ofSize: 18), .foregroundColor: DeckTheme.text3])
+            attributes: [.font: inputFont, .foregroundColor: DeckTheme.text3])
         field.delegate = self
         field.target = self
         field.action = #selector(submit)
@@ -100,7 +104,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         field.cell?.lineBreakMode = .byTruncatingTail
         field.translatesAutoresizingMaskIntoConstraints = false
 
-        let speak = NSButton(image: Self.symbol("speaker.wave.2", size: 14, weight: .regular),
+        let speak = NSButton(image: Self.symbol("speaker.wave.2", size: 13, weight: .regular),
                              target: self, action: #selector(speakQuery))
         speak.isBordered = false
         speak.contentTintColor = DeckTheme.text3
@@ -108,10 +112,11 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         speak.focusRingType = .none
         speak.translatesAutoresizingMaskIntoConstraints = false
 
+        let gap = DeckTheme.gap
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = DeckTheme.gap
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 12, right: 12)
+        stack.spacing = gap
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: gap, bottom: gap, right: gap)
         stack.translatesAutoresizingMaskIntoConstraints = false
         let document = FlippedView()
         document.translatesAutoresizingMaskIntoConstraints = false
@@ -132,14 +137,15 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             tint.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
             tint.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
 
-            icon.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: 18),
+            // The icon sits over the cards' text column (gap + card padding).
+            icon.centerXAnchor.constraint(equalTo: glass.leadingAnchor, constant: gap + CardView.padding + 7),
             icon.centerYAnchor.constraint(equalTo: glass.topAnchor, constant: inputHeight / 2),
-            field.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            field.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: gap + CardView.padding + 22),
             field.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
-            speak.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: 8),
-            speak.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -16),
+            speak.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: gap),
+            speak.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -(gap + CardView.padding - 4)),
             speak.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
-            speak.widthAnchor.constraint(equalToConstant: 24),
+            speak.widthAnchor.constraint(equalToConstant: 22),
 
             scroll.topAnchor.constraint(equalTo: glass.topAnchor, constant: inputHeight),
             scroll.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
@@ -155,6 +161,19 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
         ])
         contentView = glass
+    }
+
+    /// A stretchable rounded rectangle for `NSVisualEffectView.maskImage`.
+    private static func roundedMask(radius: CGFloat) -> NSImage {
+        let edge = radius * 2 + 1
+        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
+            NSColor.black.set()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        image.resizingMode = .stretch
+        return image
     }
 
     // MARK: - Show / hide
@@ -176,7 +195,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     /// Clicking anywhere else puts it away, like Deck's Finder and Spotlight.
     override func resignKey() {
         super.resignKey()
-        if isVisible { close() }
+        if isVisible && !isDemo { close() }
     }
 
     override func close() {
@@ -204,6 +223,27 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             return true
         }
         return false
+    }
+
+    /// `HOVERDICT_LOOKUP_DEMO=1`: the window with canned results for 「lora」 (what the user
+    /// screenshotted for I-26), no network or speech — to check the look.
+    func showDemo(dictionary: NSAttributedString?) {
+        isDemo = true
+        toggle()
+        field.stringValue = "lora"
+        var demo = State(query: "lora", language: .en)
+        demo.dictionary = .done(dictionary)
+        demo.translations = [.zh: .done("劳拉"), .ja: .done("ローラ")]
+        demo.claude = .done(.success(ClaudeTranslation(
+            zh: "LoRA（低秩适配，一种大模型微调方法）；LoRa（远距离低功耗无线通信技术）；洛拉（人名）",
+            ja: "LoRA（低ランク適応）；LoRa（長距離無線通信規格）；ローラ（人名）",
+            en: "LoRA (Low-Rank Adaptation); LoRa (long-range radio); Lora (given name)",
+            note: "LoRA 是一种只训练少量低秩矩阵来微调大模型的方法，省显存、可插拔。")))
+        demo.wiki = .done(WikiTerm(
+            titles: [.zh: "LoRa", .ja: "LoRa", .en: "LoRa"],
+            summary: "LoRa 是一种远距离、低功耗的无线通信调制技术，常用于物联网设备。"))
+        state = demo
+        render()
     }
 
     // MARK: - Lookup
@@ -318,8 +358,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         case .loading: out.loading()
         case .done(let text?): out.append(Self.restyled(text))
         case .done(nil):
-            out.add(state.language == .zh ? "词典只有英→中、日→中，中文看下面的翻译" : "没有释义",
-                    size: 13, color: DeckTheme.text3)
+            out.dim(state.language == .zh ? "词典只有英→中、日→中，中文看下面的翻译" : "没有释义")
         }
         return out.string
     }
@@ -327,16 +366,13 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     private func translationCard(_ state: State) -> NSAttributedString {
         let out = Builder()
         out.heading("系统翻译")
-        var first = true
         for target in TypedLanguage.displayOrder where target != state.language {
-            if !first { out.newline() }
-            first = false
-            out.add(target.name + "  ", size: 13, color: DeckTheme.text3)
+            out.row(target)
             switch state.translations[target] {
             case .done(let text) where !text.hasPrefix("（"):
-                out.add(text, size: 16, weight: .medium)
+                out.word(text)
                 out.speaker(text, target)
-            case .done(let text): out.add(text, size: 13, color: DeckTheme.text3)
+            case .done(let text): out.dim(text)
             default: out.loading()
             }
         }
@@ -357,25 +393,24 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             case .http(let code, let detail):
                 message = code == 0 ? detail : "API 出错（\(code)）\(detail.isEmpty ? "" : "：" + detail)"
             }
-            out.add(message, size: 13, color: DeckTheme.text3)
+            out.dim(message)
         case .done(.success(let translation)):
-            var first = true
             for language in TypedLanguage.displayOrder {
-                let text = translation.text(for: language)
-                guard !text.isEmpty else { continue }
-                if !first { out.newline() }
-                first = false
-                out.add(language.name + "  ", size: 13, color: DeckTheme.text3)
-                out.add(text, size: 16, weight: .medium)
-                // Read the first sense only: "变压器；Transformer 模型" → "变压器".
-                let firstSense = text.split(whereSeparator: { $0 == "；" || $0 == ";" }).first.map(String.init) ?? text
-                out.speaker(firstSense.trimmingCharacters(in: .whitespaces), language)
+                let senses = Sense.split(translation.text(for: language))
+                guard !senses.isEmpty else { continue }
+                out.row(language)
+                // One sense a line; the speaker reads the first.
+                for (index, sense) in senses.enumerated() {
+                    if index > 0 { out.continuation() }
+                    out.word(sense.word)
+                    if let gloss = sense.gloss { out.gloss(gloss) }
+                    if index == 0 { out.speaker(sense.word, language) }
+                }
             }
             if !translation.note.isEmpty {
                 out.paragraph(translation.note)
             }
-            out.newline()
-            out.add(translation.model.displayName, size: 11, color: DeckTheme.text3)
+            out.meta(translation.model.displayName)
         }
         return out.string
     }
@@ -385,18 +420,15 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         out.heading("Wikipedia")
         switch state.wiki {
         case .loading: out.loading()
-        case .done(nil): out.add("没有这个词条，或连不上网", size: 13, color: DeckTheme.text3)
+        case .done(nil): out.dim("没有这个词条，或连不上网")
         case .done(let term?):
-            var first = true
             for language in TypedLanguage.displayOrder {
-                if !first { out.newline() }
-                first = false
-                out.add(language.name + "  ", size: 13, color: DeckTheme.text3)
+                out.row(language)
                 if let title = term.titles[language] {
-                    out.add(title, size: 16, weight: .medium)
+                    out.word(title)
                     out.speaker(title, language)
                 } else {
-                    out.add("—", size: 13, color: DeckTheme.text3)
+                    out.dim("—")
                 }
             }
             if let summary = term.summary {
@@ -407,7 +439,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     }
 
     /// The dictionary text was made for the hover popup (system label colors, 12–13 pt):
-    /// put it in Deck's colors, a size up.
+    /// put it in Deck's colors, at Deck's body size.
     private static func restyled(_ text: NSAttributedString) -> NSAttributedString {
         let out = NSMutableAttributedString(attributedString: text)
         let whole = NSRange(location: 0, length: out.length)
@@ -418,7 +450,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         }
         out.enumerateAttribute(.font, in: whole) { value, range, _ in
             guard let font = value as? NSFont else { return }
-            let resized = NSFontManager.shared.convert(font, toSize: font.pointSize + 1)
+            let resized = NSFontManager.shared.convert(font, toSize: font.pointSize + 0.5)
             out.addAttribute(.font, value: resized, range: range)
         }
         return out
@@ -471,65 +503,113 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
 
 // MARK: - Pieces
 
-/// Builds one card's text in Deck's type: a small dim heading, then the content.
+/// Builds one card's text in Deck's type: a small dim heading; rows of a language label and
+/// names, the names lined up on a tab stop (wrapped and further lines too); notes under them.
 private final class Builder {
     let string = NSMutableAttributedString()
+    private var started = false
+    /// Right after a row's label: a dim note goes on the same line.
+    private var labelled = false
+    private var style = Builder.style()
 
-    private func paragraphStyle(spacingBefore: CGFloat = 0) -> NSParagraphStyle {
+    /// Where names start after the 中 / 日 / 英 label.
+    private static let column: CGFloat = 24
+
+    private static func style(indent: CGFloat = 0, before: CGFloat = 0) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 2
-        style.paragraphSpacingBefore = spacingBefore
+        style.paragraphSpacingBefore = before
+        style.headIndent = indent
+        style.tabStops = indent > 0 ? [NSTextTab(textAlignment: .left, location: indent)] : []
+        style.defaultTabInterval = column
         return style
     }
 
-    func add(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular,
-             color: NSColor = DeckTheme.text, link: URL? = nil) {
-        var attributes: [NSAttributedString.Key: Any] = [
+    private func add(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular,
+                     color: NSColor = DeckTheme.text) {
+        string.append(NSAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: size, weight: weight),
             .foregroundColor: color,
-            .paragraphStyle: paragraphStyle(),
-        ]
-        if let link { attributes[.link] = link }
-        string.append(NSAttributedString(string: text, attributes: attributes))
+            .paragraphStyle: style,
+        ]))
     }
 
-    func append(_ text: NSAttributedString) { string.append(text) }
+    /// Starts a new paragraph (none before the first).
+    private func paragraph(style: NSParagraphStyle) {
+        if started { add("\n", size: DeckTheme.bodySize) }
+        self.style = style
+        started = true
+        labelled = false
+    }
 
-    func newline() { add("\n", size: 13) }
+    func append(_ text: NSAttributedString) {
+        paragraph(style: Self.style(before: 4))
+        string.append(text)
+    }
 
     func heading(_ text: String) {
-        add(text + "\n", size: 11.5, weight: .semibold, color: DeckTheme.text3)
+        paragraph(style: Self.style())
+        add(text, size: 11, weight: .medium, color: DeckTheme.text3)
     }
 
-    func loading() { add("…", size: 13, color: DeckTheme.text3) }
+    /// A language's row: its label, then (after `word` …) its names.
+    func row(_ language: TypedLanguage) {
+        paragraph(style: Self.style(indent: Self.column, before: 4))
+        add(language.name + "\t", size: 12, color: DeckTheme.text3)
+        labelled = true
+    }
+
+    /// Another line of the same row, lined up under its first name.
+    func continuation() {
+        paragraph(style: Self.style(indent: Self.column))
+        add("\t", size: 12)
+    }
+
+    func word(_ text: String) { add(text, size: DeckTheme.bodySize + 0.5) }
+
+    /// The explanation that was in brackets after a name.
+    func gloss(_ text: String) { add("  " + text, size: 12.5, color: DeckTheme.text2) }
+
+    func dim(_ text: String) {
+        if !labelled { paragraph(style: Self.style(before: 4)) }
+        add(text, size: 12.5, color: DeckTheme.text3)
+    }
+
+    func loading() { dim("…") }
 
     /// A note or introduction under the names, a little apart from them.
     func paragraph(_ text: String) {
-        string.append(NSAttributedString(string: "\n" + text, attributes: [
-            .font: NSFont.systemFont(ofSize: 13),
-            .foregroundColor: DeckTheme.text2,
-            .paragraphStyle: paragraphStyle(spacingBefore: 6),
-        ]))
+        paragraph(style: Self.style(before: 8))
+        add(text, size: 12.5, color: DeckTheme.text2)
+    }
+
+    /// Small print at the end (the model that answered).
+    func meta(_ text: String) {
+        paragraph(style: Self.style(before: 6))
+        add(text, size: 11, color: DeckTheme.text3)
     }
 
     /// A speaker icon after a name; clicking it reads the name (LookupWindow handles the link).
     func speaker(_ text: String, _ language: TypedLanguage) {
         let attachment = NSTextAttachment()
-        let image = LookupWindow.symbol("speaker.wave.2", size: 12, weight: .regular)
+        let image = LookupWindow.symbol("speaker.wave.2", size: 11, weight: .regular)
         image.isTemplate = true
         attachment.image = image.tinted(DeckTheme.text3)
         attachment.bounds = NSRect(x: 0, y: -1, width: image.size.width, height: image.size.height)
-        add("  ", size: 13)
+        add("  ", size: 12)
         let icon = NSMutableAttributedString(attachment: attachment)
-        if let link = LookupWindow.speakURL(text, language) {
-            icon.addAttribute(.link, value: link, range: NSRange(location: 0, length: icon.length))
-        }
+        var attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: style]
+        if let link = LookupWindow.speakURL(text, language) { attributes[.link] = link }
+        icon.addAttributes(attributes, range: NSRange(location: 0, length: icon.length))
         string.append(icon)
     }
 }
 
-/// One result block: a rounded fill a shade off the sheet, its text selectable.
+/// One result block: Deck's light `--fill` over the glass (see-through, no edge), its text
+/// selectable.
 private final class CardView: NSView {
+    /// Text inset from the card's edge.
+    static let padding: CGFloat = 12
     private let textView = FitTextView()
 
     init(text: NSAttributedString, delegate: NSTextViewDelegate) {
@@ -547,17 +627,18 @@ private final class CardView: NSView {
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
         textView.linkTextAttributes = [.cursor: NSCursor.pointingHand]
-        textView.selectedTextAttributes = [.backgroundColor: DeckTheme.fill.withAlphaComponent(0.25)]
+        textView.selectedTextAttributes = [.backgroundColor: DeckTheme.accent.withAlphaComponent(0.2)]
         textView.focusRingType = .none
         textView.delegate = delegate
         textView.textStorage?.setAttributedString(text)
         textView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(textView)
+        let pad = Self.padding
         NSLayoutConstraint.activate([
-            textView.topAnchor.constraint(equalTo: topAnchor, constant: 11),
-            textView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            textView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            textView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            textView.topAnchor.constraint(equalTo: topAnchor, constant: pad - 2),
+            textView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
+            textView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
+            textView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
         ])
     }
 
@@ -585,13 +666,15 @@ private final class FitTextView: NSTextView {
     }
 }
 
-/// A plain fill that follows light / dark.
+/// A plain fill that follows light / dark, with the sheet's corners.
 private final class TintView: NSView {
     private let color: NSColor
-    init(color: NSColor) {
+    init(color: NSColor, radius: CGFloat) {
         self.color = color
         super.init(frame: .zero)
         wantsLayer = true
+        layer?.cornerRadius = radius
+        layer?.cornerCurve = .continuous
     }
     required init?(coder: NSCoder) { fatalError() }
     override var wantsUpdateLayer: Bool { true }

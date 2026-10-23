@@ -82,6 +82,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var englishPopup: EnglishPopup?
     private let clickDismissRadius: CGFloat = 12
 
+    /// `HOVERDICT_LOOKUP_DEMO=1` (main.swift): only the ⌥Z window with canned results.
+    func showLookupDemo() {
+        lookupWindow.showDemo(dictionary: typedDictionaryText("lora", language: .en))
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.installEditMenu()
         // Always set up the menu-bar control and the monitor FIRST, unconditionally.

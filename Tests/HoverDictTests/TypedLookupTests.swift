@@ -13,6 +13,19 @@ import Testing
         #expect(TypedLanguage.detect("线程") == .zh)
     }
 
+    @Test func splitsSenses() {
+        #expect(Sense.split("LoRA（低秩适配）；洛拉（人名）") == [
+            Sense(word: "LoRA", gloss: "低秩适配"), Sense(word: "洛拉", gloss: "人名")])
+        #expect(Sense.split("Low-Rank Adaptation (fine-tuning method); LoRa (radio)") == [
+            Sense(word: "Low-Rank Adaptation", gloss: "fine-tuning method"),
+            Sense(word: "LoRa", gloss: "radio")])
+        #expect(Sense.split("变压器；Transformer 模型；") == [
+            Sense(word: "变压器", gloss: nil), Sense(word: "Transformer 模型", gloss: nil)])
+        #expect(Sense.split("（注）") == [Sense(word: "（注）", gloss: nil)])
+        #expect(Sense.split("C(++) 语言") == [Sense(word: "C(++) 语言", gloss: nil)])
+        #expect(Sense.split("").isEmpty)
+    }
+
     @Test func glossaryReadsBackwards() {
         let glossary = Glossary(text: """
         thread = 线程；帖子（讨论串）；线
