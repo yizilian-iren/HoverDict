@@ -71,8 +71,8 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
 
     private func buildContent() {
         // Deck's Glass: macOS's frosted material (the user's Deck uses Full screen) with
-        // Deck's Warm base over it. The corners are a mask image, not a layer mask: a
-        // masked layer stops the material from sampling what's behind the window.
+        // Deck's Warm base over it. The corners are a mask image (Apple's way for this
+        // view) rather than a layer mask.
         let glass = NSVisualEffectView()
         glass.material = .fullScreenUI
         glass.blendingMode = .behindWindow
