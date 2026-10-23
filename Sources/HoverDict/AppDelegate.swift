@@ -83,8 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let clickDismissRadius: CGFloat = 12
 
     /// `HOVERDICT_LOOKUP_DEMO=1` (main.swift): only the ⌥Z window with canned results.
-    func showLookupDemo() {
-        lookupWindow.showDemo(dictionary: typedDictionaryText("lora", language: .en))
+    func showLookupDemo(fallback: Bool) {
+        lookupWindow.showDemo(dictionary: typedDictionaryText("lora", language: .en), fallback: fallback)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

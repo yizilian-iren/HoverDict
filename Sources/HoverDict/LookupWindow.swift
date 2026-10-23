@@ -3,15 +3,16 @@ import AVFoundation
 import Translation
 
 /// The typed-lookup window (⌥Z): type a word or term in 中 / 日 / 英, press Return, and
-/// get cards — the dictionaries HoverDict already has, macOS's offline translation into the
-/// other two languages, Claude's translation with every main sense, and the term's Wikipedia
-/// names in all three with a short introduction. Every name has a speaker that reads it in
-/// the user's Claude voice.
+/// get two cards (D-014) — the dictionaries HoverDict already has (only when they have the
+/// word), and Claude's translation with every main sense. When Claude gives nothing (no key,
+/// offline, an error), macOS's offline translation into the other two languages takes its
+/// place. Every name has a speaker that reads it in the user's Claude voice.
 ///
-/// Looks like Agent Deck (N-006, I-26): a borderless sheet of frosted glass with Deck's Warm
+/// Looks like Agent Deck (N-006, I-26, I-27): a borderless sheet of frosted glass with Deck's
 /// tint, 14 px corners, the input bare on top, results as 10 px cards 8 px apart and 8 px in
 /// from the edge — no title bar, separator lines or colored edges. Names in the text color,
-/// labels and explanations in Deck's dimmer ones, nothing bold.
+/// labels and explanations in Deck's dimmer ones, nothing bold; mauve only on the speakers
+/// and the model's name.
 final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
 
     /// The dictionary block for a query (call off the main thread); nil = nothing found.
@@ -43,9 +44,9 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         var query: String
         var language: TypedLanguage
         var dictionary: Pending<NSAttributedString?> = .loading
-        var translations: [TypedLanguage: Pending<String>] = [:]
         var claude: Pending<Result<ClaudeTranslation, ClaudeTranslator.Failure>> = .loading
-        var wiki: Pending<WikiTerm?> = .loading
+        /// macOS's translation, asked for only once Claude has failed.
+        var translations: [TypedLanguage: Pending<String>] = [:]
     }
 
     init() {
@@ -107,7 +108,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         let speak = NSButton(image: Self.symbol("speaker.wave.2", size: 13, weight: .regular),
                              target: self, action: #selector(speakQuery))
         speak.isBordered = false
-        speak.contentTintColor = DeckTheme.text3
+        speak.contentTintColor = DeckTheme.accent
         speak.toolTip = "朗读"
         speak.focusRingType = .none
         speak.translatesAutoresizingMaskIntoConstraints = false
@@ -189,6 +190,9 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
         makeFirstResponder(field)
+        // The selection in mauve like the cards', not the system's blue.
+        (field.currentEditor() as? NSTextView)?.selectedTextAttributes =
+            [.backgroundColor: DeckTheme.accent.withAlphaComponent(0.2)]
         field.currentEditor()?.selectAll(nil)
     }
 
@@ -226,22 +230,24 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     }
 
     /// `HOVERDICT_LOOKUP_DEMO=1`: the window with canned results for 「lora」 (what the user
-    /// screenshotted for I-26), no network or speech — to check the look.
-    func showDemo(dictionary: NSAttributedString?) {
+    /// screenshotted for I-26), no network or speech — to check the look. `fallback`: Claude
+    /// failed (no key) and the system translation stands in.
+    func showDemo(dictionary: NSAttributedString?, fallback: Bool) {
         isDemo = true
         toggle()
         field.stringValue = "lora"
         var demo = State(query: "lora", language: .en)
         demo.dictionary = .done(dictionary)
-        demo.translations = [.zh: .done("劳拉"), .ja: .done("ローラ")]
-        demo.claude = .done(.success(ClaudeTranslation(
-            zh: "LoRA（低秩适配，一种大模型微调方法）；LoRa（远距离低功耗无线通信技术）；洛拉（人名）",
-            ja: "LoRA（低ランク適応）；LoRa（長距離無線通信規格）；ローラ（人名）",
-            en: "LoRA (Low-Rank Adaptation); LoRa (long-range radio); Lora (given name)",
-            note: "LoRA 是一种只训练少量低秩矩阵来微调大模型的方法，省显存、可插拔。")))
-        demo.wiki = .done(WikiTerm(
-            titles: [.zh: "LoRa", .ja: "LoRa", .en: "LoRa"],
-            summary: "LoRa 是一种远距离、低功耗的无线通信调制技术，常用于物联网设备。"))
+        if fallback {
+            demo.claude = .done(.failure(.noKey))
+            demo.translations = [.zh: .done("劳拉"), .ja: .done("ローラ")]
+        } else {
+            demo.claude = .done(.success(ClaudeTranslation(
+                zh: "LoRA（低秩适配，一种大模型微调方法）；LoRa（远距离低功耗无线通信技术）；洛拉（人名）",
+                ja: "LoRA（低ランク適応）；LoRa（長距離無線通信規格）；ローラ（人名）",
+                en: "LoRA (Low-Rank Adaptation); LoRa (long-range radio); Lora (given name)",
+                note: "LoRA 是一种只训练少量低秩矩阵来微调大模型的方法，省显存、可插拔。")))
+        }
         state = demo
         render()
     }
@@ -254,10 +260,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         generation += 1
         let gen = generation
         let language = TypedLanguage.detect(query)
-        var fresh = State(query: query, language: language)
-        let targets = TypedLanguage.displayOrder.filter { $0 != language }
-        for target in targets { fresh.translations[target] = .loading }
-        state = fresh
+        state = State(query: query, language: language)
         render()
         if soundEnabled() { speak(query, language: language) }
 
@@ -266,19 +269,25 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             let text = dictionaryText?(query, language)
             await MainActor.run { self.update(gen) { $0.dictionary = .done(text) } }
         }
+        Task {
+            let result = await ClaudeTranslator.translate(query, from: language)
+            self.update(gen) { $0.claude = .done(result) }
+            if case .failure = result { self.translateInstead(query, from: language, gen) }
+        }
+    }
+
+    /// Claude gave nothing: macOS's offline translation into the other two languages.
+    @MainActor
+    private func translateInstead(_ query: String, from language: TypedLanguage, _ gen: Int) {
+        let targets = TypedLanguage.displayOrder.filter { $0 != language }
+        update(gen) { state in
+            for target in targets { state.translations[target] = .loading }
+        }
         for target in targets {
             Task {
                 let text = await Self.translate(query, from: language, to: target)
                 self.update(gen) { $0.translations[target] = .done(text) }
             }
-        }
-        Task {
-            let result = await ClaudeTranslator.translate(query, from: language)
-            self.update(gen) { $0.claude = .done(result) }
-        }
-        Task {
-            let term = await WikiTerms.lookup(query, language: language)
-            self.update(gen) { $0.wiki = .done(term) }
         }
     }
 
@@ -329,7 +338,11 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             resize()
             return
         }
-        let cards = [dictionaryCard(state), translationCard(state), claudeCard(state), wikiCard(state)]
+        // The dictionary (local, in well under a second) shows only when it has the word, so
+        // Chinese input or a name it lacks leaves just Claude's card — no "nothing found".
+        var cards: [NSAttributedString] = []
+        if case .done(let text?) = state.dictionary { cards.append(dictionaryCard(text)) }
+        cards.append(claudeCard(state))
         for content in cards {
             let card = CardView(text: content, delegate: self)
             stack.addArrangedSubview(card)
@@ -351,19 +364,15 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         invalidateShadow()
     }
 
-    private func dictionaryCard(_ state: State) -> NSAttributedString {
+    private func dictionaryCard(_ text: NSAttributedString) -> NSAttributedString {
         let out = Builder()
         out.heading("词典")
-        switch state.dictionary {
-        case .loading: out.loading()
-        case .done(let text?): out.append(Self.restyled(text))
-        case .done(nil):
-            out.dim(state.language == .zh ? "词典只有英→中、日→中，中文看下面的翻译" : "没有释义")
-        }
+        out.append(Self.restyled(text))
         return out.string
     }
 
-    private func translationCard(_ state: State) -> NSAttributedString {
+    /// In Claude's place when Claude failed: the system translation, and why in small print.
+    private func translationCard(_ state: State, because failure: ClaudeTranslator.Failure) -> NSAttributedString {
         let out = Builder()
         out.heading("系统翻译")
         for target in TypedLanguage.displayOrder where target != state.language {
@@ -376,24 +385,28 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             default: out.loading()
             }
         }
+        out.note(Self.reason(failure))
         return out.string
     }
 
+    private static func reason(_ failure: ClaudeTranslator.Failure) -> String {
+        switch failure {
+        case .noKey: return "没有 Claude API key：菜单栏 HoverDict → Claude API key…"
+        case .refused: return "Claude 没有回答这个词"
+        case .unreadable: return "Claude 的回答读不出来"
+        case .http(let code, let detail):
+            return code == 0 ? "Claude：\(detail)" : "Claude API 出错（\(code)）\(detail.isEmpty ? "" : "：" + detail)"
+        }
+    }
+
     private func claudeCard(_ state: State) -> NSAttributedString {
+        if case .done(.failure(let failure)) = state.claude {
+            return translationCard(state, because: failure)
+        }
         let out = Builder()
         out.heading("Claude")
         switch state.claude {
-        case .loading: out.loading()
-        case .done(.failure(let failure)):
-            let message: String
-            switch failure {
-            case .noKey: message = "菜单栏 HoverDict → Claude API key… 填入 key 后，这里显示 Claude 的翻译"
-            case .refused: message = "Claude 没有回答这个词"
-            case .unreadable: message = "Claude 的回答读不出来"
-            case .http(let code, let detail):
-                message = code == 0 ? detail : "API 出错（\(code)）\(detail.isEmpty ? "" : "：" + detail)"
-            }
-            out.dim(message)
+        case .loading, .done(.failure): out.loading()
         case .done(.success(let translation)):
             for language in TypedLanguage.displayOrder {
                 let senses = Sense.split(translation.text(for: language))
@@ -411,29 +424,6 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
                 out.paragraph(translation.note)
             }
             out.meta(translation.model.displayName)
-        }
-        return out.string
-    }
-
-    private func wikiCard(_ state: State) -> NSAttributedString {
-        let out = Builder()
-        out.heading("Wikipedia")
-        switch state.wiki {
-        case .loading: out.loading()
-        case .done(nil): out.dim("没有这个词条，或连不上网")
-        case .done(let term?):
-            for language in TypedLanguage.displayOrder {
-                out.row(language)
-                if let title = term.titles[language] {
-                    out.word(title)
-                    out.speaker(title, language)
-                } else {
-                    out.dim("—")
-                }
-            }
-            if let summary = term.summary {
-                out.paragraph(summary)
-            }
         }
         return out.string
     }
@@ -583,8 +573,14 @@ private final class Builder {
         add(text, size: 12.5, color: DeckTheme.text2)
     }
 
-    /// Small print at the end (the model that answered).
+    /// Small print at the end: the model that answered, in the accent.
     func meta(_ text: String) {
+        paragraph(style: Self.style(before: 6))
+        add(text, size: 11, color: DeckTheme.accent)
+    }
+
+    /// Small dim print at the end: why a card is what it is.
+    func note(_ text: String) {
         paragraph(style: Self.style(before: 6))
         add(text, size: 11, color: DeckTheme.text3)
     }
@@ -594,7 +590,7 @@ private final class Builder {
         let attachment = NSTextAttachment()
         let image = LookupWindow.symbol("speaker.wave.2", size: 11, weight: .regular)
         image.isTemplate = true
-        attachment.image = image.tinted(DeckTheme.text3)
+        attachment.image = image.tinted(DeckTheme.accent)
         attachment.bounds = NSRect(x: 0, y: -1, width: image.size.width, height: image.size.height)
         add("  ", size: 12)
         let icon = NSMutableAttributedString(attachment: attachment)

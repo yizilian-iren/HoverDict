@@ -10,11 +10,12 @@ let delegate = AppDelegate()
 app.setActivationPolicy(.accessory)
 if let demo = ProcessInfo.processInfo.environment["HOVERDICT_LOOKUP_DEMO"] {
     // Screenshots of the ⌥Z window (I-26): no hover pipeline, menu or hot keys.
-    // `light` / `dark` force that appearance.
-    if let name: NSAppearance.Name = ["light": .aqua, "dark": .darkAqua][demo] {
+    // `light` / `dark` force that appearance; `,fallback` shows Claude failed (I-27).
+    let words = demo.split(separator: ",").map(String.init)
+    if let name: NSAppearance.Name = words.compactMap({ ["light": .aqua, "dark": .darkAqua][$0] }).first {
         app.appearance = NSAppearance(named: name)
     }
-    DispatchQueue.main.async { delegate.showLookupDemo() }
+    DispatchQueue.main.async { delegate.showLookupDemo(fallback: words.contains("fallback")) }
 } else {
     app.delegate = delegate
 }
