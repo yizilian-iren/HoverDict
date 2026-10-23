@@ -21,8 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.typedDictionaryText(query, language: language)
         }
         window.soundEnabled = { [weak self] in self?.panel.soundEnabled ?? true }
+        window.history = history
         return window
     }()
+    /// ⌥Z lookups and clicked words (I-29). The demo keeps its own in memory.
+    private lazy var history = LookupHistory()
 
     /// Single source of truth for pause state.
     private var isPaused = false
@@ -83,8 +86,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let clickDismissRadius: CGFloat = 12
 
     /// `HOVERDICT_LOOKUP_DEMO=1` (main.swift): only the ⌥Z window with canned results.
-    func showLookupDemo(fallback: Bool) {
-        lookupWindow.showDemo(dictionary: typedDictionaryText("lora", language: .en), fallback: fallback)
+    /// `list`: the empty window with a made-up history instead.
+    func showLookupDemo(fallback: Bool, list: Bool) {
+        history = LookupHistory(directory: nil)
+        if list {
+            lookupWindow.showListDemo()
+        } else {
+            lookupWindow.showDemo(dictionary: typedDictionaryText("lora", language: .en), fallback: fallback)
+        }
+    }
+
+    /// Click mode: the clicked word and what the popup shows go on file (not in the ⌥Z list).
+    private func recordClick(_ word: String, language: TypedLanguage) {
+        let app = NSWorkspace.shared.frontmostApplication
+        history.append(HistoryRecord(query: word, language: language.rawValue, date: Date(), source: .click,
+                                     appName: app?.localizedName, bundleID: app?.bundleIdentifier,
+                                     dictionaryRTF: HistoryRecord.rtf(panel.shownText)))
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -424,6 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.panel.showJapanese(japaneseEntry,
                                                 forceSpeak: fromClick,
                                                 below: cursorGlobal)
+                        if fromClick { self.recordClick(japaneseEntry.headword, language: .ja) }
                     } else {
                         self.panel.hidePanel(animated: true)
                     }
@@ -447,6 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         }
                     }
                     showShort(fromClick)
+                    if fromClick { self.recordClick(hit.text, language: .en) }
                     self.englishPopup = EnglishPopup(word: hit.text,
                                                      cursor: cursorGlobal,
                                                      glossary: glossaryText,

@@ -410,6 +410,9 @@ final class OverlayPanel: NSPanel {
         }
     }
 
+    /// What the popup shows now (kept in the history for a clicked word).
+    var shownText: NSAttributedString { translationLabel.attributedStringValue }
+
     /// Hide the popup. Defaults to a short fade-out; pass `animated: false` for an
     /// immediate dismiss (pause / mode switch / quit).
     func hidePanel(animated: Bool = true) {

@@ -19,6 +19,8 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     var dictionaryText: ((String, TypedLanguage) -> NSAttributedString?)?
     /// Whether to read the query aloud when it's looked up (menu 朗读发声).
     var soundEnabled: () -> Bool = { true }
+    /// Where lookups are recorded, and what the empty window lists (I-29).
+    var history: LookupHistory?
 
     private let width: CGFloat = 560
     private let inputHeight: CGFloat = 48
@@ -28,6 +30,14 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     private let scroll = NSScrollView()
     private let stack = NSStackView()
     private let synthesizer = AVSpeechSynthesizer()
+    private var starButton: NSButton!
+    private var refreshButton: NSButton!
+
+    /// The rows of the history list (favorites, then recent), and the one ↑↓ is on.
+    private var listRows: [HistoryRowView] = []
+    private var selectedRow: Int?
+    /// The app in front before ⌥Z brought the window up, recorded with each lookup.
+    private var previousApp: NSRunningApplication?
 
     /// Bumped per query, so a slow answer for an earlier one is dropped.
     private var generation = 0
@@ -45,6 +55,8 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         var language: TypedLanguage
         var dictionary: Pending<NSAttributedString?> = .loading
         var claude: Pending<Result<ClaudeTranslation, ClaudeTranslator.Failure>> = .loading
+        /// Opened from the history: shows 重新查.
+        var stored = false
         /// macOS's translation, asked for only once Claude has failed.
         var translations: [TypedLanguage: Pending<String>] = [:]
     }
@@ -105,13 +117,15 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         field.cell?.lineBreakMode = .byTruncatingTail
         field.translatesAutoresizingMaskIntoConstraints = false
 
-        let speak = NSButton(image: Self.symbol("speaker.wave.2", size: 13, weight: .regular),
-                             target: self, action: #selector(speakQuery))
-        speak.isBordered = false
+        let speak = Self.button("speaker.wave.2", tip: "朗读", target: self, action: #selector(speakQuery))
         speak.contentTintColor = DeckTheme.accent
-        speak.toolTip = "朗读"
-        speak.focusRingType = .none
-        speak.translatesAutoresizingMaskIntoConstraints = false
+        refreshButton = Self.button("arrow.clockwise", tip: "重新查", target: self, action: #selector(refresh))
+        refreshButton.contentTintColor = DeckTheme.text3
+        starButton = Self.button("star", tip: "收藏", target: self, action: #selector(toggleFavorite))
+        let buttons = NSStackView(views: [refreshButton, starButton, speak])
+        buttons.orientation = .horizontal
+        buttons.spacing = 4
+        buttons.translatesAutoresizingMaskIntoConstraints = false
 
         let gap = DeckTheme.gap
         stack.orientation = .vertical
@@ -131,7 +145,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         scroll.documentView = document
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        for view in [icon, field, speak, scroll] as [NSView] { glass.addSubview(view) }
+        for view in [icon, field, buttons, scroll] as [NSView] { glass.addSubview(view) }
         NSLayoutConstraint.activate([
             tint.topAnchor.constraint(equalTo: glass.topAnchor),
             tint.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
@@ -143,10 +157,9 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             icon.centerYAnchor.constraint(equalTo: glass.topAnchor, constant: inputHeight / 2),
             field.leadingAnchor.constraint(equalTo: glass.leadingAnchor, constant: gap + CardView.padding + 22),
             field.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
-            speak.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: gap),
-            speak.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -(gap + CardView.padding - 4)),
-            speak.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
-            speak.widthAnchor.constraint(equalToConstant: 22),
+            buttons.leadingAnchor.constraint(equalTo: field.trailingAnchor, constant: gap),
+            buttons.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: -(gap + CardView.padding - 4)),
+            buttons.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
 
             scroll.topAnchor.constraint(equalTo: glass.topAnchor, constant: inputHeight),
             scroll.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
@@ -164,6 +177,16 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         contentView = glass
     }
 
+    private static func button(_ symbol: String, tip: String, target: AnyObject, action: Selector) -> NSButton {
+        let button = NSButton(image: Self.symbol(symbol, size: 13, weight: .regular), target: target, action: action)
+        button.isBordered = false
+        button.toolTip = tip
+        button.focusRingType = .none
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        return button
+    }
+
     /// A stretchable rounded rectangle for `NSVisualEffectView.maskImage`.
     private static func roundedMask(radius: CGFloat) -> NSImage {
         let edge = radius * 2 + 1
@@ -179,14 +202,22 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
 
     // MARK: - Show / hide
 
-    /// ⌥Z: bring the window up with the last query selected (typing replaces it), or put
-    /// it away when it's already in front.
+    /// ⌥Z: bring the window up empty, with the history list (I-28: the last result doesn't
+    /// stay), or put it away when it's already in front.
     func toggle() {
         if isVisible && isKeyWindow {
             close()
             return
         }
-        if !isVisible { placeOnMouseScreen() }
+        if !isVisible {
+            previousApp = NSWorkspace.shared.frontmostApplication
+            generation += 1
+            state = nil
+            field.stringValue = ""
+            selectedRow = nil
+            render()
+            placeOnMouseScreen()
+        }
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
         makeFirstResponder(field)
@@ -222,11 +253,33 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        if selector == #selector(NSResponder.cancelOperation(_:)) {
+        switch selector {
+        case #selector(NSResponder.cancelOperation(_:)):
             close()
             return true
+        case #selector(NSResponder.moveDown(_:)) where !listRows.isEmpty:
+            select(selectedRow.map { min($0 + 1, listRows.count - 1) } ?? 0)
+            return true
+        case #selector(NSResponder.moveUp(_:)) where !listRows.isEmpty:
+            select(selectedRow.map { max($0 - 1, 0) } ?? listRows.count - 1)
+            return true
+        default:
+            return false
         }
-        return false
+    }
+
+    /// Emptying the field brings the list back; typing puts it away.
+    func controlTextDidChange(_ obj: Notification) {
+        if field.stringValue.isEmpty {
+            if state != nil {
+                generation += 1
+                state = nil
+            }
+            selectedRow = nil
+            render()
+        } else if state == nil && !listRows.isEmpty {
+            render()
+        }
     }
 
     /// `HOVERDICT_LOOKUP_DEMO=1`: the window with canned results for 「lora」 (what the user
@@ -252,11 +305,47 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         render()
     }
 
+    /// `HOVERDICT_LOOKUP_DEMO=list`: the empty window over a made-up history.
+    func showListDemo() {
+        isDemo = true
+        let words: [(String, TypedLanguage, String, String, String)] = [
+            ("transformer", .en, "Transformer（神经网络架构）；变压器", "トランスフォーマー", "Transformer"),
+            ("lora", .en, "LoRA（低秩适配）；LoRa（远距离无线）", "LoRA", "LoRA"),
+            ("推論", .ja, "推理（模型推断）", "推論", "inference"),
+            ("线程", .zh, "线程", "スレッド", "thread（执行单元）"),
+            ("embedding", .en, "嵌入（向量表示）", "埋め込み", "embedding"),
+        ]
+        for (i, word) in words.enumerated() {
+            history?.append(HistoryRecord(
+                query: word.0, language: word.1.rawValue, date: Date(timeIntervalSinceNow: Double(i - 10) * 60),
+                source: .typed,
+                claude: StoredTranslation(ClaudeTranslation(zh: word.2, ja: word.3, en: word.4, note: ""))))
+        }
+        history?.setFavorite(true, for: "lora")
+        toggle()
+        select(1)
+    }
+
     // MARK: - Lookup
 
+    /// Return: look the field up — or, on the empty field, open the list row ↑↓ is on.
     @objc private func submit() {
         let query = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return }
+        guard !query.isEmpty else {
+            if let selectedRow, listRows.indices.contains(selectedRow) { open(listRows[selectedRow].record) }
+            return
+        }
+        lookUp(query)
+    }
+
+    /// 重新查: a fresh lookup of what's shown (Claude included).
+    @objc private func refresh() {
+        guard let query = state?.query else { return }
+        field.stringValue = query
+        lookUp(query)
+    }
+
+    private func lookUp(_ query: String) {
         generation += 1
         let gen = generation
         let language = TypedLanguage.detect(query)
@@ -264,16 +353,50 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         render()
         if soundEnabled() { speak(query, language: language) }
 
+        // Kept once both results are in, whether or not the window is still up.
+        let record = RecordDraft(HistoryRecord(query: query, language: language.rawValue, date: Date(),
+                                               source: .typed, appName: previousApp?.localizedName,
+                                               bundleID: previousApp?.bundleIdentifier),
+                                 into: history)
         let dictionaryText = self.dictionaryText
         Task.detached(priority: .userInitiated) {
             let text = dictionaryText?(query, language)
-            await MainActor.run { self.update(gen) { $0.dictionary = .done(text) } }
+            await MainActor.run {
+                record.dictionary(text)
+                self.update(gen) { $0.dictionary = .done(text) }
+            }
         }
         Task {
             let result = await ClaudeTranslator.translate(query, from: language)
+            record.claude(try? result.get())
             self.update(gen) { $0.claude = .done(result) }
             if case .failure = result { self.translateInstead(query, from: language, gen) }
         }
+    }
+
+    /// A word from the list: its saved results, no API call. With no Claude answer saved
+    /// (looked up offline every time) it's looked up again.
+    private func open(_ record: HistoryRecord) {
+        field.stringValue = record.query
+        guard let claude = history?.savedClaude(record.query) else {
+            lookUp(record.query)
+            return
+        }
+        generation += 1
+        var opened = State(query: record.query, language: record.typedLanguage)
+        opened.dictionary = .done(record.dictionary)
+        opened.claude = .done(.success(claude))
+        opened.stored = true
+        state = opened
+        render()
+        field.currentEditor()?.selectAll(nil)
+        if soundEnabled() { speak(record.query, language: record.typedLanguage) }
+    }
+
+    @objc private func toggleFavorite() {
+        guard let query = state?.query, let history else { return }
+        history.setFavorite(!history.isFavorite(query), for: query)
+        updateButtons()
     }
 
     /// Claude gave nothing: macOS's offline translation into the other two languages.
@@ -334,7 +457,10 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
 
     private func render() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        listRows = []
+        updateButtons()
         guard let state else {
+            if field.stringValue.isEmpty { renderList() }
             resize()
             return
         }
@@ -352,10 +478,75 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         resize()
     }
 
+    /// The star and 重新查 only with a result; the star filled in mauve when it's starred.
+    private func updateButtons() {
+        starButton.isHidden = state == nil || history == nil
+        refreshButton.isHidden = state?.stored != true
+        let starred = state.map { history?.isFavorite($0.query) ?? false } ?? false
+        starButton.image = Self.symbol(starred ? "star.fill" : "star", size: 13, weight: .regular)
+        starButton.contentTintColor = starred ? DeckTheme.accent : DeckTheme.text3
+        starButton.toolTip = starred ? "取消收藏" : "收藏"
+    }
+
+    /// The empty field: 收藏 and 最近 (I-29), each row the word and its first meaning, no
+    /// lines between them. Nothing at all when there's no history yet.
+    private func renderList() {
+        guard let history else { return }
+        let groups = [("收藏", history.favorites), ("最近", history.recent())].filter { !$0.1.isEmpty }
+        for (title, records) in groups {
+            let list = NSStackView()
+            list.orientation = .vertical
+            list.alignment = .leading
+            list.spacing = 0
+            list.translatesAutoresizingMaskIntoConstraints = false
+            let heading = NSTextField(labelWithString: title)
+            heading.font = .systemFont(ofSize: 11, weight: .medium)
+            heading.textColor = DeckTheme.text3
+            let headingBox = NSView()
+            headingBox.translatesAutoresizingMaskIntoConstraints = false
+            heading.translatesAutoresizingMaskIntoConstraints = false
+            headingBox.addSubview(heading)
+            NSLayoutConstraint.activate([
+                heading.leadingAnchor.constraint(equalTo: headingBox.leadingAnchor, constant: HistoryRowView.padding),
+                heading.topAnchor.constraint(equalTo: headingBox.topAnchor, constant: 2),
+                heading.bottomAnchor.constraint(equalTo: headingBox.bottomAnchor, constant: -4),
+            ])
+            list.addArrangedSubview(headingBox)
+            for record in records {
+                let index = listRows.count
+                let row = HistoryRowView(record: record, starred: title == "收藏")
+                row.onOpen = { [weak self] in self?.open(record) }
+                row.onHover = { [weak self] in self?.select(index) }
+                row.onUnstar = { [weak self] in
+                    self?.history?.setFavorite(false, for: record.query)
+                    self?.render()
+                }
+                row.onHide = { [weak self] in
+                    self?.history?.hide(record.query)
+                    self?.render()
+                }
+                listRows.append(row)
+                list.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+            }
+            headingBox.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+            stack.addArrangedSubview(list)
+            list.widthAnchor.constraint(equalTo: stack.widthAnchor,
+                                        constant: -(stack.edgeInsets.left + stack.edgeInsets.right)).isActive = true
+        }
+        if let selectedRow, !listRows.indices.contains(selectedRow) { self.selectedRow = nil }
+        select(selectedRow)
+    }
+
+    private func select(_ index: Int?) {
+        selectedRow = index
+        for (i, row) in listRows.enumerated() { row.isSelected = i == index }
+    }
+
     /// Grow or shrink to the cards (up to `maxHeight`, then scroll), keeping the top edge.
     private func resize() {
         stack.layoutSubtreeIfNeeded()
-        let content = state == nil ? 0 : stack.fittingSize.height
+        let content = stack.arrangedSubviews.isEmpty ? 0 : stack.fittingSize.height
         let height = min(maxHeight, inputHeight + content)
         var rect = frame
         rect.origin.y += rect.height - height
@@ -599,6 +790,118 @@ private final class Builder {
         icon.addAttributes(attributes, range: NSRange(location: 0, length: icon.length))
         string.append(icon)
     }
+}
+
+/// Collects one ⌥Z lookup's results and appends it to the history once both are in.
+@MainActor
+private final class RecordDraft {
+    private var record: HistoryRecord
+    private weak var history: LookupHistory?
+    private var pending = 2
+
+    init(_ record: HistoryRecord, into history: LookupHistory?) {
+        self.record = record
+        self.history = history
+    }
+
+    func dictionary(_ text: NSAttributedString?) {
+        record.dictionaryRTF = HistoryRecord.rtf(text)
+        finish()
+    }
+
+    func claude(_ translation: ClaudeTranslation?) {
+        record.claude = translation.map(StoredTranslation.init)
+        finish()
+    }
+
+    private func finish() {
+        pending -= 1
+        if pending == 0 { history?.append(record) }
+    }
+}
+
+/// A word in the history list: the word, its first meaning dimmer; under the mouse or ↑↓
+/// a light fill (not the system's blue). Click opens it; right-click hides it (or unstars).
+private final class HistoryRowView: NSView {
+    /// Text inset, the same as the cards' so the words line up with the search icon.
+    static let padding: CGFloat = CardView.padding
+
+    let record: HistoryRecord
+    var onOpen: (() -> Void)?
+    var onHover: (() -> Void)?
+    var onHide: (() -> Void)?
+    var onUnstar: (() -> Void)?
+    private let starred: Bool
+
+    var isSelected = false { didSet { needsDisplay = true } }
+
+    init(record: HistoryRecord, starred: Bool) {
+        self.record = record
+        self.starred = starred
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        layer?.cornerCurve = .continuous
+        translatesAutoresizingMaskIntoConstraints = false
+
+        let word = NSTextField(labelWithString: record.query)
+        word.font = .systemFont(ofSize: DeckTheme.bodySize)
+        word.textColor = DeckTheme.text
+        word.lineBreakMode = .byTruncatingTail
+        word.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        word.setContentHuggingPriority(.required, for: .horizontal)
+        let summary = NSTextField(labelWithString: record.summary)
+        summary.font = .systemFont(ofSize: 12.5)
+        summary.textColor = DeckTheme.text3
+        summary.lineBreakMode = .byTruncatingTail
+        summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for label in [word, summary] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(label)
+        }
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 30),
+            word.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.padding),
+            word.centerYAnchor.constraint(equalTo: centerYAnchor),
+            word.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.5),
+            summary.leadingAnchor.constraint(equalTo: word.trailingAnchor, constant: 10),
+            summary.firstBaselineAnchor.constraint(equalTo: word.firstBaselineAnchor),
+            summary.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -Self.padding),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {
+        layer?.backgroundColor = isSelected ? DeckTheme.fill.cgColor(for: effectiveAppearance) : .clear
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHover?() }
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onOpen?() }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let item = starred
+            ? NSMenuItem(title: "取消收藏", action: #selector(unstar), keyEquivalent: "")
+            : NSMenuItem(title: "从列表隐藏", action: #selector(hide), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+        return menu
+    }
+
+    @objc private func hide() { onHide?() }
+    @objc private func unstar() { onUnstar?() }
 }
 
 /// One result block: Deck's light `--fill` over the glass (see-through, no edge), its text
