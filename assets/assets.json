@@ -38,5 +38,13 @@
   "session": "HoverDict 开发",
   "reviewed": "answered: 界面太丑了,要和deck风格一致",
   "from": "/Users/iren/Desktop/HoverDict-shots/i18/ja-たべる.jpg"
+ },
+ "assets/reviews/i27/": {
+  "what": "I-27 ⌥Z 窗口 demo 截图「lora」:light、dark、light-fallback、dark-fallback(Paper 色阶、mauve 点缀、只留 Claude + 词典;fallback = 没 key 时系统翻译顶上)",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HOVERDICT_LOOKUP_DEMO=<light|dark>[,fallback] build/HoverDict.app,screencapture -l",
+  "license": "own work",
+  "session": "查词窗口配色和卡片"
  }
 }
