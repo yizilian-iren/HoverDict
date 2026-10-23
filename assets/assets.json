@@ -46,5 +46,13 @@
   "source": "HOVERDICT_LOOKUP_DEMO=<light|dark>[,fallback] build/HoverDict.app,screencapture -l",
   "license": "own work",
   "session": "查词窗口配色和卡片"
+ },
+ "assets/reviews/i30/": {
+  "what": "I-30 ⌥Z 窗口 demo 截图「lora」:light/dark 写完(模型名旁 · 1.8 s),light-stream/dark-stream 写到一半(只显示已写完的意思,末行 …)",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HOVERDICT_LOOKUP_DEMO=<light|dark>[,stream] build/HoverDict.app,screencapture -l",
+  "license": "own work",
+  "session": "Claude 翻译提速"
  }
 }

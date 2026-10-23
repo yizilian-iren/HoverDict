@@ -21,6 +21,9 @@ struct HistoryRecord: Codable, Equatable {
     /// The dictionary block, or for a click the popup's text, as RTF (it's styled text);
     /// nil = nothing found.
     var dictionaryRTF: Data?
+    /// How the Claude request went: TTFB, generation time, tokens (I-30). Not for a lookup
+    /// that didn't ask Claude.
+    var claudeTiming: ClaudeTiming?
 
     var key: String { Self.key(query) }
     static func key(_ query: String) -> String { query.lowercased() }

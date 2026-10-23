@@ -55,6 +55,8 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         var language: TypedLanguage
         var dictionary: Pending<NSAttributedString?> = .loading
         var claude: Pending<Result<ClaudeTranslation, ClaudeTranslator.Failure>> = .loading
+        /// What Claude has written so far, shown while it's still loading.
+        var claudePartial: ClaudeTranslation?
         /// Opened from the history: shows 重新查.
         var stored = false
         /// macOS's translation, asked for only once Claude has failed.
@@ -211,6 +213,7 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         }
         if !isVisible {
             previousApp = NSWorkspace.shared.frontmostApplication
+            if !isDemo { ClaudeTranslator.preconnect() }
             generation += 1
             state = nil
             field.stringValue = ""
@@ -284,8 +287,9 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
 
     /// `HOVERDICT_LOOKUP_DEMO=1`: the window with canned results for 「lora」 (what the user
     /// screenshotted for I-26), no network or speech — to check the look. `fallback`: Claude
-    /// failed (no key) and the system translation stands in.
-    func showDemo(dictionary: NSAttributedString?, fallback: Bool) {
+    /// failed (no key) and the system translation stands in. `streaming`: Claude's answer
+    /// as it shows while still being written (I-30).
+    func showDemo(dictionary: NSAttributedString?, fallback: Bool, streaming: Bool = false) {
         isDemo = true
         toggle()
         field.stringValue = "lora"
@@ -294,12 +298,16 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         if fallback {
             demo.claude = .done(.failure(.noKey))
             demo.translations = [.zh: .done("劳拉"), .ja: .done("ローラ")]
+        } else if streaming {
+            demo.claudePartial = PartialJSON.translation(
+                #"{"zh":"LoRA（低秩适配，一种大模型微调方法）；LoRa（远距离低功耗无线通信技术）；洛拉（人名）","ja":"LoRA（低ランク適応）；LoRa（長"#,
+                model: .current)
         } else {
             demo.claude = .done(.success(ClaudeTranslation(
                 zh: "LoRA（低秩适配，一种大模型微调方法）；LoRa（远距离低功耗无线通信技术）；洛拉（人名）",
                 ja: "LoRA（低ランク適応）；LoRa（長距離無線通信規格）；ローラ（人名）",
                 en: "LoRA (Low-Rank Adaptation); LoRa (long-range radio); Lora (given name)",
-                note: "LoRA 是一种只训练少量低秩矩阵来微调大模型的方法，省显存、可插拔。")))
+                note: "LoRA 是一种只训练少量低秩矩阵来微调大模型的方法，省显存、可插拔。", seconds: 1.8)))
         }
         state = demo
         render()
@@ -367,8 +375,10 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             }
         }
         Task {
-            let result = await ClaudeTranslator.translate(query, from: language)
-            record.claude(try? result.get())
+            let (result, timing) = await ClaudeTranslator.translate(query, from: language) { partial in
+                self.update(gen) { $0.claudePartial = partial }
+            }
+            record.claude(try? result.get(), timing: timing)
             self.update(gen) { $0.claude = .done(result) }
             if case .failure = result { self.translateInstead(query, from: language, gen) }
         }
@@ -597,26 +607,38 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         let out = Builder()
         out.heading("Claude")
         switch state.claude {
-        case .loading, .done(.failure): out.loading()
-        case .done(.success(let translation)):
-            for language in TypedLanguage.displayOrder {
-                let senses = Sense.split(translation.text(for: language))
-                guard !senses.isEmpty else { continue }
-                out.row(language)
-                // One sense a line; the speaker reads the first.
-                for (index, sense) in senses.enumerated() {
-                    if index > 0 { out.continuation() }
-                    out.word(sense.word)
-                    if let gloss = sense.gloss { out.gloss(gloss) }
-                    if index == 0 { out.speaker(sense.word, language) }
-                }
+        case .loading, .done(.failure):
+            // While it's written: the senses so far, and "…" where the model line will be.
+            if let partial = state.claudePartial {
+                senses(partial, into: out)
+                out.note("…")
+            } else {
+                out.loading()
             }
+        case .done(.success(let translation)):
+            senses(translation, into: out)
             if !translation.note.isEmpty {
                 out.paragraph(translation.note)
             }
-            out.meta(translation.model.displayName)
+            out.meta(translation.model.displayName,
+                     detail: translation.seconds.map { String(format: "%.1f s", $0) })
         }
         return out.string
+    }
+
+    /// Each language's row, one sense a line; the speaker reads the first.
+    private func senses(_ translation: ClaudeTranslation, into out: Builder) {
+        for language in TypedLanguage.displayOrder {
+            let senses = Sense.split(translation.text(for: language))
+            guard !senses.isEmpty else { continue }
+            out.row(language)
+            for (index, sense) in senses.enumerated() {
+                if index > 0 { out.continuation() }
+                out.word(sense.word)
+                if let gloss = sense.gloss { out.gloss(gloss) }
+                if index == 0 { out.speaker(sense.word, language) }
+            }
+        }
     }
 
     /// The dictionary text was made for the hover popup (system label colors, 12–13 pt):
@@ -764,10 +786,12 @@ private final class Builder {
         add(text, size: 12.5, color: DeckTheme.text2)
     }
 
-    /// Small print at the end: the model that answered, in the accent.
-    func meta(_ text: String) {
+    /// Small print at the end: the model that answered, in the accent, and how long it
+    /// took, dimmer.
+    func meta(_ text: String, detail: String? = nil) {
         paragraph(style: Self.style(before: 6))
         add(text, size: 11, color: DeckTheme.accent)
+        if let detail { add(" · " + detail, size: 11, color: DeckTheme.text3) }
     }
 
     /// Small dim print at the end: why a card is what it is.
@@ -809,8 +833,9 @@ private final class RecordDraft {
         finish()
     }
 
-    func claude(_ translation: ClaudeTranslation?) {
+    func claude(_ translation: ClaudeTranslation?, timing: ClaudeTiming?) {
         record.claude = translation.map(StoredTranslation.init)
+        record.claudeTiming = timing
         finish()
     }
 

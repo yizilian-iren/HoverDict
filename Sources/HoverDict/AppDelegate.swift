@@ -86,13 +86,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let clickDismissRadius: CGFloat = 12
 
     /// `HOVERDICT_LOOKUP_DEMO=1` (main.swift): only the ⌥Z window with canned results.
-    /// `list`: the empty window with a made-up history instead.
-    func showLookupDemo(fallback: Bool, list: Bool) {
+    /// `list`: the empty window with a made-up history instead; `streaming`: Claude's answer
+    /// half-written.
+    func showLookupDemo(fallback: Bool, list: Bool, streaming: Bool = false) {
         history = LookupHistory(directory: nil)
         if list {
             lookupWindow.showListDemo()
         } else {
-            lookupWindow.showDemo(dictionary: typedDictionaryText("lora", language: .en), fallback: fallback)
+            lookupWindow.showDemo(dictionary: typedDictionaryText("lora", language: .en), fallback: fallback,
+                                  streaming: streaming)
         }
     }
 
