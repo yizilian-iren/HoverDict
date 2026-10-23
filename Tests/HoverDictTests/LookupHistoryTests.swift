@@ -101,6 +101,31 @@ import Testing
         #expect(lines.count == 3)
     }
 
+    @Test func neverOverwritesAFileItCannotOpenOrRead() throws {
+        let dir = tempDirectory()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                                   ofItemAtPath: dir.appendingPathComponent("history.jsonl").path)
+            try? FileManager.default.removeItem(at: dir)
+        }
+        let history = LookupHistory(directory: dir)
+        history.append(typed("alpha", minutes: 1))
+        history.append(typed("beta", minutes: 2))
+        let file = dir.appendingPathComponent("history.jsonl")
+        let before = try Data(contentsOf: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file.path)
+        history.append(typed("gamma", minutes: 3))
+        #expect(try Data(contentsOf: file) == before)
+
+        let marks = dir.appendingPathComponent("marks.json")
+        let broken = Data("{\"favorites\": {\"alpha\": oops".utf8)
+        try broken.write(to: marks)
+        let reopened = LookupHistory(directory: dir)
+        reopened.setFavorite(true, for: "beta")
+        reopened.hide("alpha")
+        #expect(try Data(contentsOf: marks) == broken)
+    }
+
     @Test func dictionaryTextRoundTripsAndGivesTheSummary() {
         let text = NSMutableAttributedString(string: "record\n", attributes: [.font: NSFont.systemFont(ofSize: 15)])
         text.append(NSAttributedString(string: "记录；唱片", attributes: [.font: NSFont.systemFont(ofSize: 13)]))

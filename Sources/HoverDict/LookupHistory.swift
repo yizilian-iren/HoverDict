@@ -106,6 +106,8 @@ final class LookupHistory {
     /// Every lookup, oldest first, as in the file.
     private(set) var records: [HistoryRecord] = []
     private var marks = Marks()
+    /// marks.json is there but couldn't be read: never overwrite it with what's in memory.
+    private var marksUnreadable = false
 
     private var historyURL: URL? { directory?.appendingPathComponent("history.jsonl") }
     private var marksURL: URL? { directory?.appendingPathComponent("marks.json") }
@@ -129,9 +131,14 @@ final class LookupHistory {
                 try? Self.decoder.decode(HistoryRecord.self, from: Data($0))
             }
         }
-        if let marksURL, let data = try? Data(contentsOf: marksURL),
-           let saved = try? Self.decoder.decode(Marks.self, from: data) {
-            marks = saved
+        if let marksURL, FileManager.default.fileExists(atPath: marksURL.path) {
+            if let data = try? Data(contentsOf: marksURL),
+               let saved = try? Self.decoder.decode(Marks.self, from: data) {
+                marks = saved
+            } else {
+                marksUnreadable = true
+                NSLog("HoverDict: \(marksURL.path) can't be read; stars and hidden marks won't be saved this launch")
+            }
         }
     }
 
@@ -175,13 +182,16 @@ final class LookupHistory {
         line.append(UInt8(ascii: "\n"))
         do {
             try ensureDirectory()
-            if let handle = try? FileHandle(forWritingTo: historyURL) {
-                defer { try? handle.close() }
-                try handle.seekToEnd()
-                try handle.write(contentsOf: line)
-            } else {
-                try line.write(to: historyURL, options: .atomic)
+            // Only a missing file is created; one that's there but can't be opened is left
+            // alone (writing it anew would leave only this line).
+            guard FileManager.default.fileExists(atPath: historyURL.path) else {
+                try line.write(to: historyURL, options: .withoutOverwriting)
+                return
             }
+            let handle = try FileHandle(forWritingTo: historyURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: line)
         } catch {
             NSLog("HoverDict: saving history failed: \(error)")
         }
@@ -199,7 +209,7 @@ final class LookupHistory {
     }
 
     private func saveMarks() {
-        guard let marksURL, let data = try? Self.encoder.encode(marks) else { return }
+        guard let marksURL, !marksUnreadable, let data = try? Self.encoder.encode(marks) else { return }
         do {
             try ensureDirectory()
             try data.write(to: marksURL, options: .atomic)
