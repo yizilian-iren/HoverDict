@@ -110,5 +110,13 @@
   "source": "HOVERDICT_LOOKUP_DEMO 截图(screencapture -l),分支 i31-claude-only",
   "license": "own work",
   "session": "纯 Claude 查词"
+ },
+ "assets/reviews/i32/bench.md": {
+  "what": "I-32 Claude 翻译测速结果:4 个变体(fallbacks / json_schema)× 4 词 × 2 轮的 ttfb / firstText / total 和花费",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HoverDict --bench(Sonnet 5.5,快速模式),分支 i32-bench",
+  "license": "own work",
+  "session": "Claude 测速"
  }
 }

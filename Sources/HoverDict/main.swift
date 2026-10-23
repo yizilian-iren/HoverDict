@@ -5,6 +5,18 @@ import AppKit
 // We run as an `.accessory` app: no Dock icon, and — crucially for a hover/take-word
 // tool — it never becomes the active application, so it won't steal focus from the
 // app the user is reading (Claude / browser / VS Code).
+if let i = CommandLine.arguments.firstIndex(of: "--bench") {
+    // Claude translation timing (I-32): no UI, no hot keys; runs, prints, exits.
+    let output = CommandLine.arguments.dropFirst(i + 1).first
+    let done = DispatchSemaphore(value: 0)
+    var code: Int32 = 0
+    Task.detached {
+        code = await ClaudeBench.run(output: output)
+        done.signal()
+    }
+    done.wait()
+    exit(code)
+}
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.setActivationPolicy(.accessory)

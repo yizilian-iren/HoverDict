@@ -99,16 +99,7 @@ enum ClaudeTranslator {
         guard let body = try? JSONSerialization.data(withJSONObject: requestBody(term, from: language, model: model, fast: fast)) else {
             return (.failure(.unreadable), nil)
         }
-        var request = URLRequest(url: messagesURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(key, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        // `fallbacks: "default"`: a safety decline is retried on a fallback model in the same call.
-        if model.supportsFallback {
-            request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
-        }
-        request.httpBody = body
+        let request = apiRequest(key: key, body: body, fallback: model.supportsFallback)
 
         let start = ProcessInfo.processInfo.systemUptime
         func now() -> Double { ((ProcessInfo.processInfo.systemUptime - start) * 1000).rounded() / 1000 }
@@ -176,12 +167,29 @@ enum ClaudeTranslator {
         session.dataTask(with: request).resume()
     }
 
-    private static let messagesURL = URL(string: "https://api.anthropic.com/v1/messages")!
+    /// A POST to the Messages API (or another endpoint, for the bench) with the key.
+    static func apiRequest(key: String, body: Data, fallback: Bool, url: URL = messagesURL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        // `fallbacks: "default"`: a safety decline is retried on a fallback model in the same call.
+        if fallback {
+            request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+        }
+        request.httpBody = body
+        return request
+    }
+
+    static let messagesURL = URL(string: "https://api.anthropic.com/v1/messages")!
     private static let preconnectLock = NSLock()
     private static var lastPreconnect: TimeInterval = -.infinity
 
+    /// `fallback` / `schema` default to what the app sends; the bench (I-32) turns them off.
     static func requestBody(_ term: String, from language: TypedLanguage,
-                            model: ClaudeModel = .current, fast: Bool = false) -> [String: Any] {
+                            model: ClaudeModel = .current, fast: Bool = false,
+                            fallback: Bool? = nil, schema useSchema: Bool = true) -> [String: Any] {
         // The reading first: it's short, so it is on the card with the first sense.
         let schema: [String: Any] = [
             "type": "object",
@@ -207,19 +215,22 @@ enum ClaudeTranslator {
         marks for Chinese (e.g. xiànchéng). Leave it empty for an acronym read letter by letter \
         or when there is no common reading.
         In note, one short sentence in Simplified Chinese saying what it is, technical sense first.
-        """
+        """ + (useSchema ? "" : """
+
+        Answer with only a JSON object with the string fields reading, zh, ja, en and note, \
+        in that order, and nothing else.
+        """)
         // Low effort keeps it quick; 快速模式 also turns thinking down where the model allows.
+        var outputConfig: [String: Any] = ["effort": "low"]
+        if useSchema { outputConfig["format"] = ["type": "json_schema", "schema": schema] }
         var body: [String: Any] = [
             "model": model.rawValue,
             "max_tokens": 2000,
             "stream": true,
-            "output_config": [
-                "effort": "low",
-                "format": ["type": "json_schema", "schema": schema],
-            ],
+            "output_config": outputConfig,
             "messages": [["role": "user", "content": prompt]],
         ]
-        if model.supportsFallback { body["fallbacks"] = "default" }
+        if fallback ?? model.supportsFallback { body["fallbacks"] = "default" }
         if fast, let thinking = model.fastThinking { body["thinking"] = thinking }
         return body
     }

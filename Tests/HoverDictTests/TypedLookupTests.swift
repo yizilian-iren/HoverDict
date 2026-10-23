@@ -96,4 +96,19 @@ import Testing
         #expect(haiku["model"] as? String == "claude-haiku-5-5" && haiku["fallbacks"] == nil)
         #expect(haiku["thinking"] == nil)
     }
+
+    /// The bench's variants (I-32): without fallbacks / without the schema, the rest the same.
+    @Test func benchVariantsDropOnlyTheirPart() {
+        let app = ClaudeTranslator.requestBody("x", from: .en, model: .sonnet, fast: true)
+        #expect(app["fallbacks"] as? String == "default")
+        #expect((app["output_config"] as? [String: Any])?["format"] != nil)
+        let bare = ClaudeTranslator.requestBody("x", from: .en, model: .sonnet, fast: true, fallback: false, schema: false)
+        #expect(bare["fallbacks"] == nil)
+        let config = bare["output_config"] as? [String: Any]
+        #expect(config?["format"] == nil && config?["effort"] as? String == "low")
+        #expect(bare["thinking"] != nil)
+        let prompt = ((bare["messages"] as? [[String: Any]])?.first?["content"] as? String) ?? ""
+        #expect(prompt.contains("only a JSON object"))
+        #expect(ClaudeBench.median([3, 1, 2, 10]) == 2.5 && ClaudeBench.median([]) == nil)
+    }
 }
