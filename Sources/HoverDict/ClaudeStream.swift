@@ -6,6 +6,8 @@ struct ClaudeTiming: Codable, Equatable {
     /// The model asked for, and the one that answered (another after a server-side fallback).
     var model: String
     var servedModel: String?
+    /// Sent with 快速模式 on (I-31); nil in lines written before it.
+    var fast: Bool?
     /// The response headers arrived: connection, TLS and the API's queueing, before any work.
     var ttfb: Double?
     /// The first piece of the answer's text: everything before it is fixed cost (and thinking).
@@ -105,15 +107,17 @@ enum PartialJSON {
     }
 
     /// What can be shown of an answer so far: closed fields whole, and of the open one only
-    /// the senses already ended by "；", so no line is shown half-written.
+    /// the senses already ended by "；", so no line is shown half-written (the reading and
+    /// the note only once closed).
     static func translation(_ text: String, model: ClaudeModel) -> ClaudeTranslation? {
         var (fields, open) = fields(text)
-        if let open, open.key != "note",
+        if let open, open.key != "note", open.key != "reading",
            let end = open.value.lastIndex(where: { $0 == "；" || $0 == ";" }) {
             fields[open.key] = String(open.value[..<end])
         }
         let translation = ClaudeTranslation(zh: fields["zh"] ?? "", ja: fields["ja"] ?? "",
-                                            en: fields["en"] ?? "", note: fields["note"] ?? "", model: model)
+                                            en: fields["en"] ?? "", note: fields["note"] ?? "",
+                                            reading: fields["reading"] ?? "", model: model)
         let shown = TypedLanguage.displayOrder.contains { !Sense.split(translation.text(for: $0)).isEmpty }
         return shown ? translation : nil
     }

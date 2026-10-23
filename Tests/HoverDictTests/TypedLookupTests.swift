@@ -50,6 +50,10 @@ import Testing
         #expect(translation.zh == "变压器；Transformer 模型")
         #expect(translation.text(for: .ja) == "変圧器；Transformer")
         #expect(translation.note == "一种神经网络架构。")
+        #expect(translation.reading.isEmpty)
+
+        let withReading = #"{"stop_reason":"end_turn","content":[{"type":"text","text":"{\"reading\":\"/ˈθrɛd/\",\"zh\":\"线程\",\"ja\":\"スレッド\",\"en\":\"thread\",\"note\":\"\"}"}]}"#
+        #expect(try ClaudeTranslator.parse(Data(withReading.utf8)).get().reading == "/ˈθrɛd/")
 
         let refused = #"{"stop_reason":"refusal","content":[]}"#
         #expect(ClaudeTranslator.parse(Data(refused.utf8)) == .failure(.refused))
@@ -65,6 +69,24 @@ import Testing
         #expect((output["format"] as? [String: Any])?["type"] as? String == "json_schema")
         let prompt = try #require((body["messages"] as? [[String: Any]])?.first?["content"] as? String)
         #expect(prompt.contains("线程") && prompt.contains("Chinese term"))
+        // The reading comes first (I-31), and the prompt asks for the term's own reading.
+        let schema = try #require((output["format"] as? [String: Any])?["schema"] as? [String: Any])
+        #expect((schema["required"] as? [String])?.first == "reading")
+        #expect(prompt.contains("In reading") && prompt.contains("pinyin"))
+    }
+
+    @Test func fastModeTurnsThinkingDownWhereItCan() {
+        func thinking(_ model: ClaudeModel, fast: Bool) -> String? {
+            (ClaudeTranslator.requestBody("x", from: .en, model: model, fast: fast)["thinking"] as? [String: Any])?["type"] as? String
+        }
+        #expect(thinking(.sonnet, fast: true) == "between_tools")
+        #expect(thinking(.haiku, fast: true) == "disabled")
+        #expect(thinking(.opus, fast: true) == nil && thinking(.fable, fast: true) == nil)
+        for model in ClaudeModel.allCases { #expect(thinking(model, fast: false) == nil) }
+        // between_tools takes no other field in `thinking`, and only effort high or below.
+        let body = ClaudeTranslator.requestBody("x", from: .en, model: .sonnet, fast: true)
+        #expect((body["thinking"] as? [String: Any])?.count == 1)
+        #expect((body["output_config"] as? [String: Any])?["effort"] as? String == "low")
     }
 
     @Test func claudeModelsAndDefault() {

@@ -1,14 +1,17 @@
 import Foundation
 import Security
 
-/// The typed term in 中 / 日 / 英 from Claude, every main sense (technical first), plus a
-/// one-line Chinese note. Uses the Messages API with the user's own key (menu
+/// The typed term in 中 / 日 / 英 from Claude, every main sense (technical first), its
+/// reading (I-31), plus a one-line Chinese note. Uses the Messages API with the user's own key (menu
 /// Claude API key…), kept in the Keychain.
 struct ClaudeTranslation: Equatable {
     var zh: String
     var ja: String
     var en: String
     var note: String
+    /// How the typed term itself is read: IPA for English, kana for Japanese, pinyin for
+    /// Chinese. Empty in answers saved before I-31.
+    var reading: String = ""
     /// The model that answered, shown on the card.
     var model: ClaudeModel = ClaudeModel.current
     /// How long the request took, for the card; nil when it came from the history.
@@ -48,6 +51,27 @@ enum ClaudeModel: String, CaseIterable {
 
     /// Haiku 5.5 has no server-side fallback for safety declines.
     var supportsFallback: Bool { self != .haiku }
+
+    /// What 快速模式 sends as `thinking` (I-31): the lowest setting each model takes —
+    /// Sonnet 5.5 `between_tools`, Haiku 5.5 `disabled` (both only at effort high or below;
+    /// the request uses low). Opus 5.5 and Fable 5.1 can't turn thinking off: nothing sent.
+    var fastThinking: [String: Any]? {
+        switch self {
+        case .sonnet: ["type": "between_tools"]
+        case .haiku: ["type": "disabled"]
+        case .opus, .fable: nil
+        }
+    }
+}
+
+/// Menu 快速模式（少 thinking）, on unless turned off; saved in UserDefaults.
+enum ClaudeFastMode {
+    static let defaultsKey = "HoverDict.claudeFastMode"
+
+    static var isOn: Bool {
+        get { UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: defaultsKey) }
+    }
 }
 
 enum ClaudeTranslator {
@@ -68,11 +92,11 @@ enum ClaudeTranslator {
     /// Streams the answer (I-30): `partial` gets what can be shown so far each time it
     /// grows, the result the whole answer; the timing goes into the history.
     static func translate(_ term: String, from language: TypedLanguage,
-                          model: ClaudeModel = .current,
+                          model: ClaudeModel = .current, fast: Bool = ClaudeFastMode.isOn,
                           partial: @escaping @MainActor (ClaudeTranslation) -> Void = { _ in })
         async -> (Result<ClaudeTranslation, Failure>, ClaudeTiming?) {
         guard let key = APIKeyStore.read() else { return (.failure(.noKey), nil) }
-        guard let body = try? JSONSerialization.data(withJSONObject: requestBody(term, from: language, model: model)) else {
+        guard let body = try? JSONSerialization.data(withJSONObject: requestBody(term, from: language, model: model, fast: fast)) else {
             return (.failure(.unreadable), nil)
         }
         var request = URLRequest(url: messagesURL)
@@ -88,7 +112,7 @@ enum ClaudeTranslator {
 
         let start = ProcessInfo.processInfo.systemUptime
         func now() -> Double { ((ProcessInfo.processInfo.systemUptime - start) * 1000).rounded() / 1000 }
-        var timing = ClaudeTiming(model: model.rawValue, total: 0)
+        var timing = ClaudeTiming(model: model.rawValue, fast: fast, total: 0)
         func finish(_ result: Result<ClaudeTranslation, Failure>) -> (Result<ClaudeTranslation, Failure>, ClaudeTiming?) {
             timing.total = now()
             switch result {
@@ -157,16 +181,18 @@ enum ClaudeTranslator {
     private static var lastPreconnect: TimeInterval = -.infinity
 
     static func requestBody(_ term: String, from language: TypedLanguage,
-                            model: ClaudeModel = .current) -> [String: Any] {
+                            model: ClaudeModel = .current, fast: Bool = false) -> [String: Any] {
+        // The reading first: it's short, so it is on the card with the first sense.
         let schema: [String: Any] = [
             "type": "object",
             "properties": [
+                "reading": ["type": "string"],
                 "zh": ["type": "string"],
                 "ja": ["type": "string"],
                 "en": ["type": "string"],
                 "note": ["type": "string"],
             ],
-            "required": ["zh", "ja", "en", "note"],
+            "required": ["reading", "zh", "ja", "en", "note"],
             "additionalProperties": false,
         ]
         let prompt = """
@@ -176,9 +202,13 @@ enum ClaudeTranslator {
         common meanings, list the main ones in each language separated by "；", the technical \
         (computing / science / engineering) meaning first. Use the names people in the field \
         actually use (e.g. Transformer stays "Transformer" in Chinese and Japanese). \
+        In reading, how the looked-up term itself is pronounced, nothing else: IPA between \
+        slashes for English (e.g. /ˈθrɛd/), kana for Japanese (e.g. すいろん), pinyin with tone \
+        marks for Chinese (e.g. xiànchéng). Leave it empty for an acronym read letter by letter \
+        or when there is no common reading.
         In note, one short sentence in Simplified Chinese saying what it is, technical sense first.
         """
-        // None of these models accept `thinking: disabled`; low effort keeps it quick.
+        // Low effort keeps it quick; 快速模式 also turns thinking down where the model allows.
         var body: [String: Any] = [
             "model": model.rawValue,
             "max_tokens": 2000,
@@ -190,6 +220,7 @@ enum ClaudeTranslator {
             "messages": [["role": "user", "content": prompt]],
         ]
         if model.supportsFallback { body["fallbacks"] = "default" }
+        if fast, let thinking = model.fastThinking { body["thinking"] = thinking }
         return body
     }
 
@@ -210,7 +241,8 @@ enum ClaudeTranslator {
               let zh = fields["zh"], let ja = fields["ja"], let en = fields["en"] else {
             return .failure(.unreadable)
         }
-        return .success(ClaudeTranslation(zh: zh, ja: ja, en: en, note: fields["note"] ?? "", model: model))
+        return .success(ClaudeTranslation(zh: zh, ja: ja, en: en, note: fields["note"] ?? "",
+                                          reading: fields["reading"] ?? "", model: model))
     }
 
     private static func errorMessage(_ data: Data) -> String? {

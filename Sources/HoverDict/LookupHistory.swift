@@ -68,6 +68,8 @@ struct StoredTranslation: Codable, Equatable {
     var ja: String
     var en: String
     var note: String
+    /// nil in lines written before I-31.
+    var reading: String?
     var model: String
 
     init(_ translation: ClaudeTranslation) {
@@ -75,11 +77,12 @@ struct StoredTranslation: Codable, Equatable {
         ja = translation.ja
         en = translation.en
         note = translation.note
+        reading = translation.reading.isEmpty ? nil : translation.reading
         model = translation.model.rawValue
     }
 
     var translation: ClaudeTranslation {
-        ClaudeTranslation(zh: zh, ja: ja, en: en, note: note,
+        ClaudeTranslation(zh: zh, ja: ja, en: en, note: note, reading: reading ?? "",
                           model: ClaudeModel(rawValue: model) ?? .sonnet)
     }
 }

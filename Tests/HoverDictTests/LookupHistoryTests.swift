@@ -145,4 +145,21 @@ import Testing
                                                                              en: "LoRA", note: "")))
         #expect(lora.summary == "低秩适配")
     }
+
+    @Test func readingIsSavedAndOldLinesStillOpen() throws {
+        let stored = StoredTranslation(ClaudeTranslation(zh: "线程", ja: "スレッド", en: "thread", note: "",
+                                                         reading: "/θrɛd/"))
+        let data = try JSONEncoder().encode(stored)
+        #expect(try JSONDecoder().decode(StoredTranslation.self, from: data).translation.reading == "/θrɛd/")
+        // A line from before I-31: no reading, and a dictionary block beside Claude's answer.
+        let old = #"{"date":"2026-10-22T00:00:00Z","language":"en","query":"thread","source":"typed","#
+            + #""claude":{"zh":"线程","ja":"スレッド","en":"thread","note":"","model":"claude-sonnet-5-5"},"#
+            + #""dictionaryRTF":"e1xydGYxfQ=="}"#
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let record = try decoder.decode(HistoryRecord.self, from: Data(old.utf8))
+        let translation = try #require(record.claude?.translation)
+        #expect(translation.reading.isEmpty && translation.zh == "线程" && translation.model == .sonnet)
+        #expect(record.dictionaryRTF != nil)
+    }
 }

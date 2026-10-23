@@ -144,6 +144,12 @@ final class StatusBarController {
         modelParent.submenu = modelMenu
         menu.addItem(modelParent)
 
+        // 快速模式 (I-31): less thinking where the model can turn it down; on by default.
+        let fast = NSMenuItem(title: "快速模式（少 thinking）", action: #selector(toggleFastMode(_:)), keyEquivalent: "")
+        fast.target = self
+        fast.state = ClaudeFastMode.isOn ? .on : .off
+        menu.addItem(fast)
+
         let settings = NSMenuItem(title: "屏幕录制权限设置…",
                                   action: #selector(openSettings),
                                   keyEquivalent: "")
@@ -198,6 +204,11 @@ final class StatusBarController {
         guard let raw = sender.representedObject as? String, let model = ClaudeModel(rawValue: raw) else { return }
         ClaudeModel.current = model
         for item in modelItems { item.state = item === sender ? .on : .off }
+    }
+
+    @objc private func toggleFastMode(_ sender: NSMenuItem) {
+        ClaudeFastMode.isOn.toggle()
+        sender.state = ClaudeFastMode.isOn ? .on : .off
     }
 
     @objc private func togglePause() {

@@ -3,10 +3,11 @@ import AVFoundation
 import Translation
 
 /// The typed-lookup window (⌥Z): type a word or term in 中 / 日 / 英, press Return, and
-/// get two cards (D-014) — the dictionaries HoverDict already has (only when they have the
-/// word), and Claude's translation with every main sense. When Claude gives nothing (no key,
-/// offline, an error), macOS's offline translation into the other two languages takes its
-/// place. Every name has a speaker that reads it in the user's Claude voice.
+/// get one card (D-015): Claude's translation with every main sense and the term's reading;
+/// until its first sense is in, a soft light sweeps across the card. When Claude gives
+/// nothing (no key, offline, an error), macOS's offline translation into the other two
+/// languages takes its place. Every name has a speaker that reads it in the user's Claude
+/// voice. The hover and click popups keep the dictionaries.
 ///
 /// Looks like Agent Deck (N-006, I-26, I-27): a borderless sheet of frosted glass with Deck's
 /// tint, 14 px corners, the input bare on top, results as 10 px cards 8 px apart and 8 px in
@@ -15,8 +16,6 @@ import Translation
 /// and the model's name.
 final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
 
-    /// The dictionary block for a query (call off the main thread); nil = nothing found.
-    var dictionaryText: ((String, TypedLanguage) -> NSAttributedString?)?
     /// Whether to read the query aloud when it's looked up (menu 朗读发声).
     var soundEnabled: () -> Bool = { true }
     /// Where lookups are recorded, and what the empty window lists (I-29).
@@ -53,7 +52,6 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     private struct State {
         var query: String
         var language: TypedLanguage
-        var dictionary: Pending<NSAttributedString?> = .loading
         var claude: Pending<Result<ClaudeTranslation, ClaudeTranslator.Failure>> = .loading
         /// What Claude has written so far, shown while it's still loading.
         var claudePartial: ClaudeTranslation?
@@ -289,25 +287,28 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
     /// screenshotted for I-26), no network or speech — to check the look. `fallback`: Claude
     /// failed (no key) and the system translation stands in. `streaming`: Claude's answer
     /// as it shows while still being written (I-30).
-    func showDemo(dictionary: NSAttributedString?, fallback: Bool, streaming: Bool = false) {
+    /// `waiting`: nothing from Claude yet, the light sweeping (I-31).
+    func showDemo(fallback: Bool, streaming: Bool = false, waiting: Bool = false) {
         isDemo = true
         toggle()
         field.stringValue = "lora"
         var demo = State(query: "lora", language: .en)
-        demo.dictionary = .done(dictionary)
         if fallback {
             demo.claude = .done(.failure(.noKey))
             demo.translations = [.zh: .done("劳拉"), .ja: .done("ローラ")]
+        } else if waiting {
+            // Stays loading.
         } else if streaming {
             demo.claudePartial = PartialJSON.translation(
-                #"{"zh":"LoRA（低秩适配，一种大模型微调方法）；LoRa（远距离低功耗无线通信技术）；洛拉（人名）","ja":"LoRA（低ランク適応）；LoRa（長"#,
+                #"{"reading":"/ˈlɔːrə/","zh":"LoRA（低秩适配，一种大模型微调方法）；LoRa（远距离低功耗无线通信技术）；洛拉（人名）","ja":"LoRA（低ランク適応）；LoRa（長"#,
                 model: .current)
         } else {
             demo.claude = .done(.success(ClaudeTranslation(
                 zh: "LoRA（低秩适配，一种大模型微调方法）；LoRa（远距离低功耗无线通信技术）；洛拉（人名）",
                 ja: "LoRA（低ランク適応）；LoRa（長距離無線通信規格）；ローラ（人名）",
                 en: "LoRA (Low-Rank Adaptation); LoRa (long-range radio); Lora (given name)",
-                note: "LoRA 是一种只训练少量低秩矩阵来微调大模型的方法，省显存、可插拔。", seconds: 1.8)))
+                note: "LoRA 是一种只训练少量低秩矩阵来微调大模型的方法，省显存、可插拔。",
+                reading: "/ˈlɔːrə/", seconds: 1.8)))
         }
         state = demo
         render()
@@ -361,31 +362,26 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         render()
         if soundEnabled() { speak(query, language: language) }
 
-        // Kept once both results are in, whether or not the window is still up.
-        let record = RecordDraft(HistoryRecord(query: query, language: language.rawValue, date: Date(),
-                                               source: .typed, appName: previousApp?.localizedName,
-                                               bundleID: previousApp?.bundleIdentifier),
-                                 into: history)
-        let dictionaryText = self.dictionaryText
-        Task.detached(priority: .userInitiated) {
-            let text = dictionaryText?(query, language)
-            await MainActor.run {
-                record.dictionary(text)
-                self.update(gen) { $0.dictionary = .done(text) }
-            }
-        }
+        // Kept once Claude has answered, whether or not the window is still up.
+        let draft = HistoryRecord(query: query, language: language.rawValue, date: Date(),
+                                  source: .typed, appName: previousApp?.localizedName,
+                                  bundleID: previousApp?.bundleIdentifier)
         Task {
             let (result, timing) = await ClaudeTranslator.translate(query, from: language) { partial in
                 self.update(gen) { $0.claudePartial = partial }
             }
-            record.claude(try? result.get(), timing: timing)
+            var record = draft
+            record.claude = (try? result.get()).map(StoredTranslation.init)
+            record.claudeTiming = timing
+            self.history?.append(record)
             self.update(gen) { $0.claude = .done(result) }
             if case .failure = result { self.translateInstead(query, from: language, gen) }
         }
     }
 
-    /// A word from the list: its saved results, no API call. With no Claude answer saved
-    /// (looked up offline every time) it's looked up again.
+    /// A word from the list: its saved Claude answer, no API call (lines from before I-31,
+    /// with no reading and maybe a dictionary block, open the same). With no Claude answer
+    /// saved (looked up offline every time) it's looked up again.
     private func open(_ record: HistoryRecord) {
         field.stringValue = record.query
         guard let claude = history?.savedClaude(record.query) else {
@@ -394,7 +390,6 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         }
         generation += 1
         var opened = State(query: record.query, language: record.typedLanguage)
-        opened.dictionary = .done(record.dictionary)
         opened.claude = .done(.success(claude))
         opened.stored = true
         state = opened
@@ -474,17 +469,11 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
             resize()
             return
         }
-        // The dictionary (local, in well under a second) shows only when it has the word, so
-        // Chinese input or a name it lacks leaves just Claude's card — no "nothing found".
-        var cards: [NSAttributedString] = []
-        if case .done(let text?) = state.dictionary { cards.append(dictionaryCard(text)) }
-        cards.append(claudeCard(state))
-        for content in cards {
-            let card = CardView(text: content, delegate: self)
-            stack.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: stack.widthAnchor,
-                                        constant: -(stack.edgeInsets.left + stack.edgeInsets.right)).isActive = true
-        }
+        let card = CardView(text: claudeCard(state), delegate: self)
+        if case .loading = state.claude, state.claudePartial == nil { card.addShimmer() }
+        stack.addArrangedSubview(card)
+        card.widthAnchor.constraint(equalTo: stack.widthAnchor,
+                                    constant: -(stack.edgeInsets.left + stack.edgeInsets.right)).isActive = true
         resize()
     }
 
@@ -565,13 +554,6 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         invalidateShadow()
     }
 
-    private func dictionaryCard(_ text: NSAttributedString) -> NSAttributedString {
-        let out = Builder()
-        out.heading("词典")
-        out.append(Self.restyled(text))
-        return out.string
-    }
-
     /// In Claude's place when Claude failed: the system translation, and why in small print.
     private func translationCard(_ state: State, because failure: ClaudeTranslator.Failure) -> NSAttributedString {
         let out = Builder()
@@ -609,13 +591,16 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
         switch state.claude {
         case .loading, .done(.failure):
             // While it's written: the senses so far, and "…" where the model line will be.
+            // Before the first one the card is the term and the light sweeping over it.
             if let partial = state.claudePartial {
+                out.term(state.query, reading: partial.reading)
                 senses(partial, into: out)
                 out.note("…")
             } else {
-                out.loading()
+                out.term(state.query, reading: "")
             }
         case .done(.success(let translation)):
+            out.term(state.query, reading: translation.reading)
             senses(translation, into: out)
             if !translation.note.isEmpty {
                 out.paragraph(translation.note)
@@ -639,24 +624,6 @@ final class LookupWindow: NSPanel, NSTextFieldDelegate, NSTextViewDelegate {
                 if index == 0 { out.speaker(sense.word, language) }
             }
         }
-    }
-
-    /// The dictionary text was made for the hover popup (system label colors, 12–13 pt):
-    /// put it in Deck's colors, at Deck's body size.
-    private static func restyled(_ text: NSAttributedString) -> NSAttributedString {
-        let out = NSMutableAttributedString(attributedString: text)
-        let whole = NSRange(location: 0, length: out.length)
-        // The popup marks labels (词表, 名词, phonetics) by a smaller font, not one color.
-        out.enumerateAttribute(.font, in: whole) { value, range, _ in
-            let small = ((value as? NSFont)?.pointSize ?? 13) < 13
-            out.addAttribute(.foregroundColor, value: small ? DeckTheme.text3 : DeckTheme.text, range: range)
-        }
-        out.enumerateAttribute(.font, in: whole) { value, range, _ in
-            guard let font = value as? NSFont else { return }
-            let resized = NSFontManager.shared.convert(font, toSize: font.pointSize + 0.5)
-            out.addAttribute(.font, value: resized, range: range)
-        }
-        return out
     }
 
     // MARK: - Speech
@@ -745,14 +712,17 @@ private final class Builder {
         labelled = false
     }
 
-    func append(_ text: NSAttributedString) {
-        paragraph(style: Self.style(before: 4))
-        string.append(text)
-    }
-
     func heading(_ text: String) {
         paragraph(style: Self.style())
         add(text, size: 11, weight: .medium, color: DeckTheme.text3)
+    }
+
+    /// The looked-up term, its reading after it dimmer (I-31: where the dictionary card had
+    /// its phonetics).
+    func term(_ text: String, reading: String) {
+        paragraph(style: Self.style(before: 4))
+        add(text, size: DeckTheme.bodySize + 1.5)
+        if !reading.isEmpty { add("  " + reading, size: 12.5, color: DeckTheme.text3) }
     }
 
     /// A language's row: its label, then (after `word` …) its names.
@@ -813,35 +783,6 @@ private final class Builder {
         if let link = LookupWindow.speakURL(text, language) { attributes[.link] = link }
         icon.addAttributes(attributes, range: NSRange(location: 0, length: icon.length))
         string.append(icon)
-    }
-}
-
-/// Collects one ⌥Z lookup's results and appends it to the history once both are in.
-@MainActor
-private final class RecordDraft {
-    private var record: HistoryRecord
-    private weak var history: LookupHistory?
-    private var pending = 2
-
-    init(_ record: HistoryRecord, into history: LookupHistory?) {
-        self.record = record
-        self.history = history
-    }
-
-    func dictionary(_ text: NSAttributedString?) {
-        record.dictionaryRTF = HistoryRecord.rtf(text)
-        finish()
-    }
-
-    func claude(_ translation: ClaudeTranslation?, timing: ClaudeTiming?) {
-        record.claude = translation.map(StoredTranslation.init)
-        record.claudeTiming = timing
-        finish()
-    }
-
-    private func finish() {
-        pending -= 1
-        if pending == 0 { history?.append(record) }
     }
 }
 
@@ -968,10 +909,81 @@ private final class CardView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Waiting for Claude (I-31): a soft band of light sweeping left to right over the card,
+    /// on until the card is replaced by one with the first sense.
+    func addShimmer() {
+        let shimmer = ShimmerView()
+        shimmer.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(shimmer)
+        NSLayoutConstraint.activate([
+            shimmer.topAnchor.constraint(equalTo: topAnchor),
+            shimmer.bottomAnchor.constraint(equalTo: bottomAnchor),
+            shimmer.leadingAnchor.constraint(equalTo: leadingAnchor),
+            shimmer.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+    }
+
     override func updateLayer() {
         layer?.backgroundColor = DeckTheme.fill.cgColor(for: effectiveAppearance)
     }
     override var wantsUpdateLayer: Bool { true }
+}
+
+/// The waiting light: a wide band, clear at both edges and faintly bright in the middle,
+/// gliding across with an ease so it never jumps; a pause off the right edge, then again.
+/// Doesn't take clicks, so the text under it stays selectable. Still when the user has
+/// Reduce Motion on.
+private final class ShimmerView: NSView {
+    private let band = CAGradientLayer()
+    private var animatedWidth: CGFloat = -1
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.cornerRadius = DeckTheme.cardRadius
+        layer?.cornerCurve = .continuous
+        band.startPoint = CGPoint(x: 0, y: 0.5)
+        band.endPoint = CGPoint(x: 1, y: 0.5)
+        band.locations = [0, 0.5, 1]
+        layer?.addSublayer(band)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        let isDark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // Over Paper a white glow; over the dark sheet a warm one, dimmer.
+        let peak = isDark ? NSColor(srgbRed: 1, green: 0.96, blue: 0.88, alpha: 0.07)
+                          : NSColor(white: 1, alpha: 0.55)
+        band.colors = [peak.withAlphaComponent(0).cgColor, peak.cgColor, peak.withAlphaComponent(0).cgColor]
+    }
+
+    override func layout() {
+        super.layout()
+        guard bounds.width != animatedWidth else { return }
+        animatedWidth = bounds.width
+        let width = max(120, bounds.width * 0.45)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        band.frame = CGRect(x: -width, y: 0, width: width, height: bounds.height)
+        CATransaction.commit()
+        band.removeAllAnimations()
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let sweep = CABasicAnimation(keyPath: "position.x")
+        sweep.fromValue = -width / 2
+        sweep.toValue = bounds.width + width / 2
+        sweep.duration = 1.4
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        let cycle = CAAnimationGroup()
+        cycle.animations = [sweep]
+        cycle.duration = 1.9
+        cycle.repeatCount = .infinity
+        band.add(cycle, forKey: "sweep")
+    }
 }
 
 /// An NSTextView that is as tall as its text at the width it's given.

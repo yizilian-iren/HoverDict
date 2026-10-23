@@ -100,6 +100,12 @@ import Testing
         #expect(next.zh == "变压器；Transformer" && next.ja.isEmpty)
         let note = try #require(PartialJSON.translation(#"{"zh":"线程","note":"一种；执行"#, model: .sonnet))
         #expect(note.note.isEmpty)
+        // The reading only once it's closed.
+        #expect(PartialJSON.translation(#"{"reading":"/ˈθr"#, model: .sonnet) == nil)
+        let read = try #require(PartialJSON.translation(#"{"reading":"/ˈθrɛd/","zh":"线程；"#, model: .sonnet))
+        #expect(read.reading == "/ˈθrɛd/" && read.zh == "线程")
+        let open = try #require(PartialJSON.translation(#"{"zh":"线程","reading":"/ˈθr"#, model: .sonnet))
+        #expect(open.reading.isEmpty)
     }
 
     @Test func requestStreams() {
@@ -112,6 +118,9 @@ import Testing
         defer { try? FileManager.default.removeItem(at: directory) }
         let timing = ClaudeTiming(model: "claude-haiku-5-5", servedModel: "claude-haiku-5-5", ttfb: 0.41,
                                   firstText: 0.9, firstMeaning: 1.0, total: 1.6, inputTokens: 187, outputTokens: 42)
+        #expect(timing.fast == nil)
+        let fast = ClaudeTiming(model: "claude-sonnet-5-5", fast: true, total: 1)
+        #expect(try JSONDecoder().decode(ClaudeTiming.self, from: JSONEncoder().encode(fast)).fast == true)
         #expect(abs((timing.generation ?? 0) - 0.7) < 1e-9)
         LookupHistory(directory: directory).append(HistoryRecord(
             query: "thread", language: "en", date: Date(), source: .typed, claudeTiming: timing))

@@ -54,5 +54,61 @@
   "source": "HOVERDICT_LOOKUP_DEMO=<light|dark>[,stream] build/HoverDict.app,screencapture -l",
   "license": "own work",
   "session": "Claude 翻译提速"
+ },
+ "assets/reviews/i31/light-wait.png": {
+  "what": "I-31 纯 Claude ⌥Z 窗口 demo「lora」 · 亮色 · 等待态扫光",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HOVERDICT_LOOKUP_DEMO 截图(screencapture -l),分支 i31-claude-only",
+  "license": "own work",
+  "session": "纯 Claude 查词"
+ },
+ "assets/reviews/i31/dark-wait.png": {
+  "what": "I-31 纯 Claude ⌥Z 窗口 demo「lora」 · 暗色 · 等待态扫光",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HOVERDICT_LOOKUP_DEMO 截图(screencapture -l),分支 i31-claude-only",
+  "license": "own work",
+  "session": "纯 Claude 查词"
+ },
+ "assets/reviews/i31/light.png": {
+  "what": "I-31 纯 Claude ⌥Z 窗口 demo「lora」 · 亮色 · 完成(读音 /ˈlɔːrə/)",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HOVERDICT_LOOKUP_DEMO 截图(screencapture -l),分支 i31-claude-only",
+  "license": "own work",
+  "session": "纯 Claude 查词"
+ },
+ "assets/reviews/i31/dark.png": {
+  "what": "I-31 纯 Claude ⌥Z 窗口 demo「lora」 · 暗色 · 完成",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HOVERDICT_LOOKUP_DEMO 截图(screencapture -l),分支 i31-claude-only",
+  "license": "own work",
+  "session": "纯 Claude 查词"
+ },
+ "assets/reviews/i31/light-stream.png": {
+  "what": "I-31 纯 Claude ⌥Z 窗口 demo「lora」 · 亮色 · streaming 半截",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HOVERDICT_LOOKUP_DEMO 截图(screencapture -l),分支 i31-claude-only",
+  "license": "own work",
+  "session": "纯 Claude 查词"
+ },
+ "assets/reviews/i31/dark-fallback.png": {
+  "what": "I-31 纯 Claude ⌥Z 窗口 demo「lora」 · 暗色 · 没 key 时系统翻译",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HOVERDICT_LOOKUP_DEMO 截图(screencapture -l),分支 i31-claude-only",
+  "license": "own work",
+  "session": "纯 Claude 查词"
+ },
+ "assets/reviews/i31/light-wait-a.png": {
+  "what": "I-31 纯 Claude ⌥Z 窗口 demo「lora」 · 亮色 · 等待态(扫光间隙)",
+  "added": "2026-10-23",
+  "kind": "review",
+  "source": "HOVERDICT_LOOKUP_DEMO 截图(screencapture -l),分支 i31-claude-only",
+  "license": "own work",
+  "session": "纯 Claude 查词"
  }
 }
